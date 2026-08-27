@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "GITHUB_TOKEN": "fixture-secret-value"
+      }
+    },
+    "docs": {
+      "url": "https://mcp.example.com/mcp?token=fixture-url-secret"
+    }
+  }
+}

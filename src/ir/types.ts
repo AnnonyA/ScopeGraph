@@ -11,7 +11,9 @@ export type NodeKind =
   | "environment"
   | "network"
   | "tool"
-  | "skill";
+  | "skill"
+  | "mcp-server"
+  | "capability";
 
 export type EdgeKind =
   | "controls"
@@ -20,7 +22,15 @@ export type EdgeKind =
   | "reads"
   | "writes"
   | "executes"
-  | "sends-to";
+  | "sends-to"
+  | "spawns"
+  | "connects"
+  | "exposes";
+
+export type CapabilityKind =
+  | "process.spawn"
+  | "network.connect"
+  | "environment.expose";
 
 export interface Evidence {
   file: string;
@@ -46,5 +56,13 @@ export interface GraphEdge {
 export interface Diagnostic {
   confidence: "UNKNOWN";
   message: string;
+  evidence: Evidence[];
+}
+
+export interface Capability {
+  id: string;
+  kind: CapabilityKind;
+  source: string;
+  target: string;
   evidence: Evidence[];
 }
