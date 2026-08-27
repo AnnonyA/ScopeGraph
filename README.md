@@ -10,30 +10,35 @@
 
 ScopeGraph is a local-first static analyzer for reasoning about what AI-agent tooling can actually reach. Instead of flagging isolated API names, it builds an evidence-backed graph and looks for demonstrable source-to-sink paths.
 
-The current core focuses on JavaScript and TypeScript execution flows. It can prove when untrusted function input reaches Node.js process-execution APIs, preserve the evidence path, and stay conservative when a dynamic call cannot be resolved.
+The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory the runtime authority granted to configured MCP servers, preserve evidence, and stay conservative when behavior cannot be resolved.
 
 ```text
-untrusted input
-      │
-      ▼
- local command value
-      │
-      ▼
-child_process.exec
-      │
-      ▼
- shell execution
+                 project
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+      JS / TS              MCP config
+          │                   │
+          ▼              ┌────┼─────────────┐
+   taint / calls          ▼    ▼             ▼
+          │             process network  environment
+          └──────────┬────┘
+                     ▼
+             Agent IR + evidence
+                     │
+                     ▼
+          authority / reachability
 ```
 
 ## Why ScopeGraph
 
-Agent security is often discussed as a list of permissions or suspicious strings. That misses composition: a capability becomes important because of what can reach it and what it can reach next.
+Agent security is often discussed as a list of permissions or suspicious strings. That misses composition: a capability matters because of what can reach it and what it can reach next.
 
 ScopeGraph is designed around four rules:
 
 - **Static-first** — analyzed projects are parsed, not executed.
 - **Evidence-backed** — proven findings retain the source path that produced them.
-- **Conservative** — unsupported dynamic behavior becomes `UNKNOWN`, not a fabricated vulnerability.
+- **Conservative** — unsupported behavior becomes `UNKNOWN`, not a fabricated vulnerability.
 - **Deterministic** — the same source and ScopeGraph version should produce the same semantic result.
 
 ## Current v0.1 core
@@ -50,10 +55,16 @@ Implemented today:
 - basic taint propagation through identifiers, properties, assignments, binary expressions, and templates
 - `UNKNOWN` diagnostics for unresolved computed call targets
 - `SG1001` — **Untrusted content reaches shell execution**
+- `.mcp.json` / `mcp.json` discovery
+- common `mcpServers` configuration parsing
+- MCP stdio `process.spawn` capability extraction
+- MCP remote `network.connect` capability extraction
+- explicit MCP environment-key exposure inventory
+- credential-safe reporting: environment values, command args, URL paths, query strings, and fragments are not retained in capability output
 - terminal and JSON scan output
 - controlled positive, negative, and unresolved fixtures
 
-ScopeGraph intentionally does **not** claim full MCP, Claude Code, or Codex coverage yet. Those frontends are roadmap work built on top of the same IR.
+ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, or Codex coverage yet. Those frontends are built incrementally on top of the same IR.
 
 ## Quick start
 
@@ -78,13 +89,20 @@ Machine-readable output:
 node dist/cli/scan.js scan ./path/to/project --json
 ```
 
-A proven execution flow produces output similar to:
+Example with both code and MCP configuration:
 
 ```text
 ScopeGraph
 
 Analyzed: 1 JavaScript / TypeScript file
+MCP servers: 2
+Capabilities: 3
 Findings: 1
+
+Authority
+network.connect  docs -> https://mcp.example.com
+environment.expose  workspace -> GITHUB_TOKEN
+process.spawn  workspace -> node
 
 CRITICAL SG1001
 Untrusted content reaches shell execution
@@ -99,6 +117,37 @@ Exit codes:
 | `1` | A high/critical finding was proven |
 | `2` | ScopeGraph could not complete the scan |
 
+## MCP authority without secret retention
+
+Given:
+
+```json
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "GITHUB_TOKEN": "..."
+      }
+    },
+    "docs": {
+      "url": "https://mcp.example.com/mcp?token=..."
+    }
+  }
+}
+```
+
+ScopeGraph retains only the authority-relevant, non-secret facts:
+
+```text
+process.spawn       workspace -> node
+environment.expose  workspace -> GITHUB_TOKEN
+network.connect      docs      -> https://mcp.example.com
+```
+
+It does not keep the environment value, command arguments, URL path, query string, or fragment in the capability report.
+
 ## How it works
 
 ```text
@@ -107,24 +156,25 @@ source tree
     ▼
 discovery
     │
-    ▼
-JS / TS frontend
+    ├──────────────► JS / TS frontend
     │
-    ▼
-Agent IR + evidence graph
-    │
-    ▼
-reachability / taint
-    │
-    ▼
-evidence-backed findings
+    └──────────────► MCP config frontend
+                        │
+                        ▼
+                Agent IR + evidence graph
+                        │
+                        ▼
+              reachability / authority
+                        │
+                        ▼
+              findings + capabilities
 ```
 
-The frontend owns syntax-specific reasoning. The analysis layer only sees the common graph, so future MCP, skill, and agent-configuration frontends can feed the same engine without duplicating security logic.
+Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later MCP-tool, skill, and agent-configuration support can reuse the same graph instead of duplicating security logic.
 
-## Example
+## JavaScript example
 
-This is considered unsafe because the command originates from a function parameter:
+This is reported because the command originates from a function parameter:
 
 ```ts
 import { exec } from "node:child_process";
@@ -147,21 +197,21 @@ If ScopeGraph cannot resolve a dynamic target safely, it records an unresolved d
 
 ## Safety model
 
-ScopeGraph does not execute analyzed source code, imported project modules, discovered hooks, or shell commands. The analyzer reads project files and parses supported syntax statically.
+ScopeGraph does not execute analyzed source code, imported project modules, MCP servers, discovered hooks, or shell commands. The analyzer only reads project files and parses supported syntax/configuration statically.
 
 ## Roadmap
 
 Planned layers, in order:
 
-1. MCP configuration and tool-capability extraction
+1. MCP SDK tool-registration discovery and tool-level capability linking
 2. Claude Code, Codex, and `SKILL.md` frontends
-3. filesystem, environment/secret, and network semantics
+3. filesystem, secret-source, and network-send semantics in JS/TS
 4. composed-authority analysis across multiple tools
 5. `scopegraph diff` for authority changes between revisions
 6. SARIF output and pull-request annotations
 7. interactive local HTML capability graph
 
-The roadmap is intentionally incremental: a new feature should only ship when its positive, negative, and unresolved cases are reproducible.
+The roadmap is intentionally incremental: a feature only ships when its positive, negative, and unresolved cases are reproducible.
 
 ## Development
 
