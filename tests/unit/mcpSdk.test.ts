@@ -19,6 +19,7 @@ test("discovers MCP v2 registerTool through a simple server alias", () => {
   const result = discoverMcpTools("server.ts", v2);
   assert.equal(result.tools.length, 1);
   assert.equal(result.tools[0]?.name, "run");
+  assert.equal(result.tools[0]?.serverBinding, "server");
   assert.equal(result.tools[0]?.sdkStyle, "v2");
   assert.deepEqual(result.tools[0]?.inputs, ["command"]);
   assert.equal(result.diagnostics.length, 0);
@@ -56,6 +57,22 @@ test("preserves static MCP annotations as metadata only", () => {
     readOnlyHint: true,
     destructiveHint: false,
   });
+});
+
+test("keeps a proven tool and handler when its registration config is dynamic", () => {
+  const result = discoverMcpTools("dynamic-config.ts", `
+    import { McpServer } from "@modelcontextprotocol/server";
+    const server = new McpServer({ name: "demo", version: "1.0.0" });
+    server.registerTool("run", runtimeConfig(), async (input) => input.command);
+  `);
+
+  assert.equal(result.tools.length, 1);
+  assert.equal(result.tools[0]?.name, "run");
+  assert.deepEqual(result.tools[0]?.inputs, ["command"]);
+  assert.equal(result.diagnostics.some((diagnostic) =>
+    diagnostic.confidence === "UNKNOWN"
+    && diagnostic.message === "MCP input schema could not be resolved; handler analysis continued"
+  ), true);
 });
 
 test("reports malformed MCP source as UNKNOWN instead of silently accepting it", () => {
