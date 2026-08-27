@@ -95,8 +95,9 @@ async function runDiff(args: string[]): Promise<void> {
   const positional = args.slice(1).filter((arg) => !arg.startsWith("--"));
   const json = args.includes("--json");
   const markdown = args.includes("--markdown");
-  if (json && markdown) {
-    throw new Error("Choose only one diff output format: --json or --markdown");
+  const sarif = args.includes("--sarif");
+  if ([json, markdown, sarif].filter(Boolean).length > 1) {
+    throw new Error("Choose only one diff output format: --json, --markdown or --sarif");
   }
 
   const [{ renderDiffJson }, { renderDiffTerminal }, { renderDiffMarkdown }] = await Promise.all([
@@ -114,17 +115,19 @@ async function runDiff(args: string[]): Promise<void> {
     diff = await diffProjects(positional[0]!, positional[1]!);
   } else {
     throw new Error(
-      "Usage: scopegraph diff <before-directory> <after-directory> [--json|--markdown]\n" +
-      "   or: scopegraph diff <before-ref>..<after-ref> [--json|--markdown]",
+      "Usage: scopegraph diff <before-directory> <after-directory> [--json|--markdown|--sarif]\n" +
+      "   or: scopegraph diff <before-ref>..<after-ref> [--json|--markdown|--sarif]",
     );
   }
 
   process.stdout.write(
-    markdown
-      ? renderDiffMarkdown(diff)
-      : json
-        ? renderDiffJson(diff)
-        : renderDiffTerminal(diff),
+    sarif
+      ? renderSarif(diff.addedFindings)
+      : markdown
+        ? renderDiffMarkdown(diff)
+        : json
+          ? renderDiffJson(diff)
+          : renderDiffTerminal(diff),
   );
   process.exitCode = diff.addedFindings.some(
     (finding) => finding.severity === "critical" || finding.severity === "high",
