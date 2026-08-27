@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "node",
+      "args": ["server.js"]
+    },
+    "docs": {
+      "url": "https://mcp.example.com/mcp?token=must-not-leak"
+    }
+  }
+}

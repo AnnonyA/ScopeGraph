@@ -65,20 +65,47 @@ export async function scanProject(root: string): Promise<ScanReport> {
   };
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  if (args[0] !== "scan") {
-    console.error("Usage: scopegraph scan [directory] [--json]");
-    process.exitCode = 2;
-    return;
-  }
-
+async function runScan(args: string[]): Promise<void> {
   const json = args.includes("--json");
   const root = args.find((arg, index) => index > 0 && !arg.startsWith("--")) ?? ".";
+  const report = await scanProject(root);
+  process.stdout.write(json ? renderJson(report) : renderTerminal(report));
+  process.exitCode = report.findings.some(
+    (finding) => finding.severity === "critical" || finding.severity === "high",
+  ) ? 1 : 0;
+}
+
+async function runDiff(args: string[]): Promise<void> {
+  const roots = args.slice(1).filter((arg) => !arg.startsWith("--"));
+  if (roots.length !== 2) {
+    throw new Error("Usage: scopegraph diff <before-directory> <after-directory> [--json]");
+  }
+
+  const [{ diffProjects }, { renderDiffJson }, { renderDiffTerminal }] = await Promise.all([
+    import("./diff.ts"),
+    import("../reporters/diffJson.ts"),
+    import("../reporters/diffTerminal.ts"),
+  ]);
+  const diff = await diffProjects(roots[0]!, roots[1]!);
+  process.stdout.write(args.includes("--json") ? renderDiffJson(diff) : renderDiffTerminal(diff));
+  process.exitCode = diff.addedFindings.some(
+    (finding) => finding.severity === "critical" || finding.severity === "high",
+  ) ? 1 : 0;
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
   try {
-    const report = await scanProject(root);
-    process.stdout.write(json ? renderJson(report) : renderTerminal(report));
-    process.exitCode = report.findings.some((finding) => finding.severity === "critical" || finding.severity === "high") ? 1 : 0;
+    if (args[0] === "scan") {
+      await runScan(args);
+      return;
+    }
+    if (args[0] === "diff") {
+      await runDiff(args);
+      return;
+    }
+    console.error("Usage: scopegraph <scan|diff> ...");
+    process.exitCode = 2;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 2;
