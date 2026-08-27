@@ -7,6 +7,8 @@ export interface Finding {
   title: string;
   severity: "critical" | "high" | "medium" | "low";
   confidence: "PROVEN" | "UNKNOWN";
+  signature: string;
+  pathLabels: string[];
   path: ReachabilityPath;
   evidence: Evidence[];
 }
@@ -25,17 +27,27 @@ function pathEvidence(graph: AgentGraph, path: ReachabilityPath): Evidence[] {
   });
 }
 
+function semanticPathLabels(graph: AgentGraph, path: ReachabilityPath): string[] {
+  return path.nodes.map((id) => graph.getNode(id)?.label ?? "<unknown>");
+}
+
 export function detectFindings(
   graph: AgentGraph,
   sources: ReadonlySet<string>,
   sinks: ReadonlySet<string>,
 ): Finding[] {
-  return findPaths(graph, sources, sinks).map((path) => ({
-    ruleId: "SG1001",
-    title: "Untrusted content reaches shell execution",
-    severity: "critical",
-    confidence: "PROVEN",
-    path,
-    evidence: pathEvidence(graph, path),
-  }));
+  return findPaths(graph, sources, sinks).map((path) => {
+    const ruleId = "SG1001";
+    const pathLabels = semanticPathLabels(graph, path);
+    return {
+      ruleId,
+      title: "Untrusted content reaches shell execution",
+      severity: "critical" as const,
+      confidence: "PROVEN" as const,
+      signature: `${ruleId}\0${pathLabels.join(">")}`,
+      pathLabels,
+      path,
+      evidence: pathEvidence(graph, path),
+    };
+  });
 }
