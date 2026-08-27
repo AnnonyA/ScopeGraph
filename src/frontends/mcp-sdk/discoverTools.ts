@@ -26,13 +26,18 @@ type SourceFileWithDiagnostics = ts.SourceFile & {
   parseDiagnostics?: readonly ts.Diagnostic[];
 };
 
+type ServerBinding = {
+  style: McpSdkStyle;
+  origin: string;
+};
+
 export function discoverMcpTools(filePath: string, source: string): McpToolDiscovery {
   const scriptKind = /\.[cm]?js$/i.test(filePath) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, scriptKind);
   const diagnostics: Diagnostic[] = [];
   const tools: DiscoveredMcpTool[] = [];
   const importedServerClasses = new Map<string, McpSdkStyle>();
-  const serverBindings = new Map<string, McpSdkStyle>();
+  const serverBindings = new Map<string, ServerBinding>();
   const staticStrings = new Map<string, string>();
   const handlers = new Map<string, FunctionLike>();
 
@@ -189,7 +194,7 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
         && ts.isIdentifier(declaration.initializer.expression)
       ) {
         const style = importedServerClasses.get(declaration.initializer.expression.text);
-        if (style) serverBindings.set(name, style);
+        if (style) serverBindings.set(name, { style, origin: name });
       }
     }
   }
@@ -208,9 +213,9 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
         ) {
           continue;
         }
-        const style = serverBindings.get(declaration.initializer.text);
-        if (style) {
-          serverBindings.set(declaration.name.text, style);
+        const binding = serverBindings.get(declaration.initializer.text);
+        if (binding) {
+          serverBindings.set(declaration.name.text, binding);
           changed = true;
         }
       }
@@ -221,10 +226,11 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const receiver = node.expression.expression;
       if (ts.isIdentifier(receiver)) {
-        const style = serverBindings.get(receiver.text);
+        const binding = serverBindings.get(receiver.text);
+        const style = binding?.style;
         const method = node.expression.name.text;
         const supportedMethod = style === "v2" ? method === "registerTool" : method === "tool";
-        if (style && supportedMethod) {
+        if (binding && style && supportedMethod) {
           const toolName = stringValue(node.arguments[0]);
           if (!toolName) {
             diagnostics.push({
@@ -244,11 +250,19 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
             } else {
               const firstParameter = handler.parameters[0];
               const inputs = firstParameter ? collectObjectInputNames(firstParameter) : [];
-              const annotations = style === "v2" ? parseAnnotations(node.arguments[1]) : undefined;
+              const config = node.arguments[1];
+              if (style === "v2" && config && !ts.isObjectLiteralExpression(config)) {
+                diagnostics.push({
+                  confidence: "UNKNOWN",
+                  message: "MCP input schema could not be resolved; handler analysis continued",
+                  evidence: [evidence(config, toolName)],
+                });
+              }
+              const annotations = style === "v2" ? parseAnnotations(config) : undefined;
               tools.push({
-                id: createNodeId("tool", filePath, `${receiver.text}:${toolName}`),
+                id: createNodeId("tool", filePath, `${binding.origin}:${toolName}`),
                 name: toolName,
-                serverBinding: receiver.text,
+                serverBinding: binding.origin,
                 sdkStyle: style,
                 inputs,
                 ...(annotations ? { annotations } : {}),
