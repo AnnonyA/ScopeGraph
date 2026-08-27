@@ -10,7 +10,11 @@
 
 ScopeGraph is a local-first static analyzer for reasoning about what AI-agent tooling can actually reach. Instead of flagging isolated API names, it builds an evidence-backed graph and looks for demonstrable source-to-sink paths.
 
-The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory the runtime authority granted to configured MCP servers, preserve evidence, and stay conservative when behavior cannot be resolved.
+It can also compare two project states and answer a more useful question than “what lines changed?”:
+
+> **What new authority did this change give the agent?**
+
+The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory MCP runtime authority, compare authority between project states, preserve evidence, and stay conservative when behavior cannot be resolved.
 
 ```text
                  project
@@ -28,6 +32,10 @@ The current core analyzes JavaScript/TypeScript execution flows and common MCP J
                      │
                      ▼
           authority / reachability
+                     │
+              ┌──────┴──────┐
+              ▼             ▼
+            scan           diff
 ```
 
 ## Why ScopeGraph
@@ -61,10 +69,13 @@ Implemented today:
 - MCP remote `network.connect` capability extraction
 - explicit MCP environment-key exposure inventory
 - credential-safe reporting: environment values, command args, URL paths, query strings, and fragments are not retained in capability output
-- terminal and JSON scan output
+- semantic authority diff between two project directories
+- root-independent capability comparison using `kind / source / target`
+- stable finding signatures so equivalent findings do not appear new just because a project moved
+- terminal and JSON output
 - controlled positive, negative, and unresolved fixtures
 
-ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, or Codex coverage yet. Those frontends are built incrementally on top of the same IR.
+ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or Git-revision materialization yet. Those layers are built incrementally on the same IR.
 
 ## Quick start
 
@@ -83,13 +94,45 @@ Scan a project:
 node dist/cli/scan.js scan ./path/to/project
 ```
 
-Machine-readable output:
+Compare two project states:
+
+```bash
+node dist/cli/scan.js diff ./baseline ./candidate
+```
+
+Machine-readable output works for both commands:
 
 ```bash
 node dist/cli/scan.js scan ./path/to/project --json
+node dist/cli/scan.js diff ./baseline ./candidate --json
 ```
 
-Example with both code and MCP configuration:
+## Authority diff
+
+**Detect authority changes, not just line changes.**
+
+Given a baseline that can only launch a local MCP server and a candidate that adds a remote MCP endpoint plus a newly reachable shell path:
+
+```text
+$ scopegraph diff ./baseline ./candidate
+
+ScopeGraph Authority Diff
+
+Before: ./baseline
+After:  ./candidate
+
+Added authority
++ network.connect  docs -> https://mcp.example.com
+
+New findings
++ CRITICAL SG1001  Untrusted content reaches shell execution
+```
+
+Comparison is semantic. Two equivalent capabilities with different graph IDs or project roots are treated as the same authority.
+
+The current command compares two directories. Git-native revision syntax such as `scopegraph diff main..feature` is planned as a layer on top of the same comparison engine.
+
+## Scan example
 
 ```text
 ScopeGraph
@@ -113,9 +156,9 @@ Exit codes:
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Scan completed with no high/critical finding |
-| `1` | A high/critical finding was proven |
-| `2` | ScopeGraph could not complete the scan |
+| `0` | Command completed without a newly/proven high or critical finding |
+| `1` | Scan proved a high/critical finding, or diff introduced one |
+| `2` | ScopeGraph could not complete the command |
 
 ## MCP authority without secret retention
 
@@ -166,8 +209,16 @@ discovery
                         ▼
               reachability / authority
                         │
+                  ┌─────┴─────┐
+                  ▼           ▼
+              findings   capabilities
+                  │           │
+                  └─────┬─────┘
                         ▼
-              findings + capabilities
+                semantic snapshots
+                        │
+                        ▼
+                 authority diff
 ```
 
 Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later MCP-tool, skill, and agent-configuration support can reuse the same graph instead of duplicating security logic.
@@ -203,11 +254,11 @@ ScopeGraph does not execute analyzed source code, imported project modules, MCP 
 
 Planned layers, in order:
 
-1. MCP SDK tool-registration discovery and tool-level capability linking
-2. Claude Code, Codex, and `SKILL.md` frontends
-3. filesystem, secret-source, and network-send semantics in JS/TS
-4. composed-authority analysis across multiple tools
-5. `scopegraph diff` for authority changes between revisions
+1. Git-native `main..feature` authority diff and PR integration
+2. MCP SDK tool-registration discovery and tool-level capability linking
+3. Claude Code, Codex, and `SKILL.md` frontends
+4. filesystem, secret-source, and network-send semantics in JS/TS
+5. composed-authority analysis across multiple tools
 6. SARIF output and pull-request annotations
 7. interactive local HTML capability graph
 
