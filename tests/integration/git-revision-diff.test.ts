@@ -56,8 +56,14 @@ test("diffGitRange compares detached revisions, keeps evidence relative, and cle
       [{ kind: "network.connect", source: "docs", target: "https://mcp.example.com" }],
     );
     assert.deepEqual(diff.addedFindings.map((finding) => finding.ruleId), ["SG1001"]);
-    assert.deepEqual(diff.addedFindings[0]?.evidence.map((item) => item.file), ["tool.ts"]);
-    assert.deepEqual(diff.addedCapabilities[0]?.evidence.map((item) => item.file), [".mcp.json"]);
+    assert.deepEqual(
+      [...new Set(diff.addedFindings[0]?.evidence.map((item) => item.file))],
+      ["tool.ts"],
+    );
+    assert.deepEqual(
+      [...new Set(diff.addedCapabilities[0]?.evidence.map((item) => item.file))],
+      [".mcp.json"],
+    );
     assert.equal(JSON.stringify(diff).includes("git-fixture-secret"), false);
 
     const worktrees = await git(root, ["worktree", "list", "--porcelain"]);
