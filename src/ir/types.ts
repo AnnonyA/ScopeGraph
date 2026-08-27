@@ -71,12 +71,20 @@ export interface Capability {
   evidence: Evidence[];
 }
 
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface McpTool {
   id: string;
   name: string;
   server: string;
   sdkStyle: "v2" | "v1";
   inputs: string[];
+  annotations?: ToolAnnotations;
   capabilities: Capability[];
   evidence: Evidence[];
 }
