@@ -75,8 +75,12 @@ Implemented today:
 - project-relative evidence paths so temporary or machine-specific roots do not leak into reports
 - root-independent capability comparison using `kind / source / target`
 - stable finding signatures so equivalent findings do not appear new just because a project moved
-- terminal and JSON output
-- controlled positive, negative, unresolved, and Git integration fixtures
+- terminal, JSON, and GitHub-friendly Markdown diff output
+- pull-request Authority Diff workflow using the PR base/head commit SHAs
+- read-only PR analysis with checkout credentials disabled after fetch
+- GitHub Job Summary output for semantic authority changes
+- PR gating only when a newly introduced finding is `high` or `critical`
+- controlled positive, negative, unresolved, Git, and reporter integration fixtures
 
 ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or `SKILL.md` coverage yet. Those layers are built incrementally on the same IR.
 
@@ -109,12 +113,13 @@ Compare two Git revisions from inside a repository:
 node dist/cli/scan.js diff main..feature
 ```
 
-Machine-readable output works for scan and both diff modes:
+Machine-readable and GitHub-friendly output:
 
 ```bash
 node dist/cli/scan.js scan ./path/to/project --json
 node dist/cli/scan.js diff ./baseline ./candidate --json
 node dist/cli/scan.js diff main..feature --json
+node dist/cli/scan.js diff main..feature --markdown
 ```
 
 ## Authority diff
@@ -141,6 +146,38 @@ New findings
 Comparison is semantic. Two equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority.
 
 For Git ranges, ScopeGraph resolves both revisions to commits, materializes detached temporary worktrees, analyzes them statically, normalizes evidence back to project-relative paths, and removes the worktrees afterward. The current checkout is not switched or modified by the comparison.
+
+## Pull request integration
+
+ScopeGraph dogfoods its own authority analysis on pull requests to `main`.
+
+The `Authority Diff` workflow:
+
+1. checks out the repository with full Git history;
+2. disables persisted checkout credentials;
+3. builds ScopeGraph locally;
+4. compares the exact pull-request base and head commit SHAs;
+5. writes a Markdown authority report to the GitHub Job Summary;
+6. exits successfully for informational authority changes;
+7. fails when the PR introduces a new `high` or `critical` finding.
+
+The workflow uses only `contents: read` permission. It does not post comments, modify pull requests, push commits, or require a separate API token.
+
+A Job Summary can look like this:
+
+```markdown
+## ScopeGraph Authority Diff
+
+### Added authority
+- `network.connect` — docs → `https://mcp.example.com` — `.mcp.json`
+
+### New findings
+- CRITICAL `SG1001` — Untrusted content reaches shell execution — `src/tool.ts:3`
+
+**Result: ❌ new high/critical finding detected**
+```
+
+This repository-native workflow is the first CI integration. Packaging ScopeGraph as a reusable external GitHub Action is a later release step.
 
 ## Scan example
 
@@ -264,13 +301,13 @@ ScopeGraph does not execute analyzed source code, imported project modules, MCP 
 
 Planned layers, in order:
 
-1. pull-request integration and CI-friendly authority-change reporting
-2. SARIF output and pull-request annotations
-3. MCP SDK tool-registration discovery and tool-level capability linking
-4. Claude Code, Codex, and `SKILL.md` frontends
-5. filesystem, secret-source, and network-send semantics in JS/TS
-6. composed-authority analysis across multiple tools
-7. interactive local HTML capability graph
+1. SARIF output and pull-request annotations
+2. MCP SDK tool-registration discovery and tool-level capability linking
+3. Claude Code, Codex, and `SKILL.md` frontends
+4. filesystem, secret-source, and network-send semantics in JS/TS
+5. composed-authority analysis across multiple tools
+6. interactive local HTML capability graph
+7. package/release hardening and a reusable GitHub Action
 
 The roadmap is intentionally incremental: a feature only ships when its positive, negative, and unresolved cases are reproducible.
 
