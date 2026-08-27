@@ -3,6 +3,7 @@ export type Confidence = "PROVEN" | "UNKNOWN";
 export type NodeKind =
   | "repository-content"
   | "user-input"
+  | "mcp-tool-input"
   | "tool-output"
   | "function"
   | "command"
@@ -25,10 +26,13 @@ export type EdgeKind =
   | "sends-to"
   | "spawns"
   | "connects"
-  | "exposes";
+  | "exposes"
+  | "registers"
+  | "invokes";
 
 export type CapabilityKind =
   | "process.spawn"
+  | "shell.execute"
   | "network.connect"
   | "environment.expose";
 
@@ -64,5 +68,15 @@ export interface Capability {
   kind: CapabilityKind;
   source: string;
   target: string;
+  evidence: Evidence[];
+}
+
+export interface McpTool {
+  id: string;
+  name: string;
+  server: string;
+  sdkStyle: "v2" | "v1";
+  inputs: string[];
+  capabilities: Capability[];
   evidence: Evidence[];
 }
