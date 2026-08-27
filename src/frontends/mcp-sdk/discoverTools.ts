@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { Diagnostic, Evidence } from "../../ir/types.ts";
+import type { Diagnostic, Evidence, ToolAnnotations } from "../../ir/types.ts";
 import { createNodeId } from "../../ir/ids.ts";
 import { mcpSdkStyleForModule, type McpSdkStyle } from "./knownSdk.ts";
 
@@ -9,6 +9,7 @@ export interface DiscoveredMcpTool {
   serverBinding: string;
   sdkStyle: McpSdkStyle;
   inputs: string[];
+  annotations?: ToolAnnotations;
   evidence: Evidence[];
   handlerStart: number;
   handlerEnd: number;
@@ -20,6 +21,10 @@ export interface McpToolDiscovery {
 }
 
 type FunctionLike = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
+
+type SourceFileWithDiagnostics = ts.SourceFile & {
+  parseDiagnostics?: readonly ts.Diagnostic[];
+};
 
 export function discoverMcpTools(filePath: string, source: string): McpToolDiscovery {
   const scriptKind = /\.[cm]?js$/i.test(filePath) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
@@ -42,6 +47,16 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
     };
   };
 
+  for (const diagnostic of (sourceFile as SourceFileWithDiagnostics).parseDiagnostics ?? []) {
+    const start = diagnostic.start ?? 0;
+    const location = sourceFile.getLineAndCharacterOfPosition(start);
+    diagnostics.push({
+      confidence: "UNKNOWN",
+      message: "JavaScript/TypeScript syntax could not be parsed completely",
+      evidence: [{ file: filePath, startLine: location.line + 1 }],
+    });
+  }
+
   const stringValue = (expression: ts.Expression | undefined): string | undefined => {
     if (!expression) return undefined;
     if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
@@ -49,6 +64,48 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
     }
     if (ts.isIdentifier(expression)) return staticStrings.get(expression.text);
     return undefined;
+  };
+
+  const propertyName = (property: ts.ObjectLiteralElementLike): string | undefined => {
+    if (!ts.isPropertyAssignment(property)) return undefined;
+    const name = property.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      return name.text;
+    }
+    return undefined;
+  };
+
+  const booleanLiteral = (expression: ts.Expression): boolean | undefined => {
+    if (expression.kind === ts.SyntaxKind.TrueKeyword) return true;
+    if (expression.kind === ts.SyntaxKind.FalseKeyword) return false;
+    return undefined;
+  };
+
+  const parseAnnotations = (config: ts.Expression | undefined): ToolAnnotations | undefined => {
+    if (!config || !ts.isObjectLiteralExpression(config)) return undefined;
+    const annotationsProperty = config.properties.find(
+      (property) => propertyName(property) === "annotations",
+    );
+    if (!annotationsProperty || !ts.isPropertyAssignment(annotationsProperty)) return undefined;
+    if (!ts.isObjectLiteralExpression(annotationsProperty.initializer)) return undefined;
+
+    const annotations: ToolAnnotations = {};
+    for (const property of annotationsProperty.initializer.properties) {
+      if (!ts.isPropertyAssignment(property)) continue;
+      const name = propertyName(property);
+      if (
+        name !== "readOnlyHint"
+        && name !== "destructiveHint"
+        && name !== "idempotentHint"
+        && name !== "openWorldHint"
+      ) {
+        continue;
+      }
+      const value = booleanLiteral(property.initializer);
+      if (value !== undefined) annotations[name] = value;
+    }
+
+    return Object.keys(annotations).length ? annotations : undefined;
   };
 
   const collectObjectInputNames = (parameter: ts.ParameterDeclaration): string[] => {
@@ -187,12 +244,14 @@ export function discoverMcpTools(filePath: string, source: string): McpToolDisco
             } else {
               const firstParameter = handler.parameters[0];
               const inputs = firstParameter ? collectObjectInputNames(firstParameter) : [];
+              const annotations = style === "v2" ? parseAnnotations(node.arguments[1]) : undefined;
               tools.push({
                 id: createNodeId("tool", filePath, `${receiver.text}:${toolName}`),
                 name: toolName,
                 serverBinding: receiver.text,
                 sdkStyle: style,
                 inputs,
+                ...(annotations ? { annotations } : {}),
                 evidence: [evidence(node, toolName)],
                 handlerStart: handler.getStart(sourceFile),
                 handlerEnd: handler.getEnd(),
