@@ -66,6 +66,7 @@ export async function scanProject(root: string): Promise<ScanReport> {
         server: discovered.serverBinding,
         sdkStyle: discovered.sdkStyle,
         inputs: [...discovered.inputs],
+        ...(discovered.annotations ? { annotations: { ...discovered.annotations } } : {}),
         capabilities: analysis.capabilities
           .filter((capability) => capability.source === toolSource)
           .sort(capabilityOrder),
