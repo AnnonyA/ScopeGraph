@@ -36,6 +36,21 @@ test("scanProject aggregates MCP runtime authority without leaking configured va
   assert.equal(JSON.stringify(report).includes("fixture-url-secret"), false);
 });
 
+test("scanProject attributes proven shell authority to an MCP tool", async () => {
+  const report = await scanProject(fixture("mcp-sdk-shell"));
+
+  assert.equal(report.mcpTools.length, 1);
+  assert.equal(report.mcpTools[0]?.name, "run");
+  assert.deepEqual(report.mcpTools[0]?.inputs, ["command"]);
+  assert.deepEqual(
+    report.mcpTools[0]?.capabilities.map(({ kind, source, target }) => ({ kind, source, target })),
+    [{ kind: "shell.execute", source: "mcp-tool:run", target: "child_process.exec" }],
+  );
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0]?.ruleId, "SG1001");
+  assert.equal(report.findings[0]?.pathLabels[0], "run.command");
+});
+
 test("scan CLI emits SARIF when --sarif is requested", async () => {
   const { stdout } = await execFileAsync(
     process.execPath,
