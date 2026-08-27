@@ -31,6 +31,19 @@ function locationFor(finding: Finding): object[] {
   ];
 }
 
+function ruleDescriptors(findings: Finding[]): object[] {
+  const byId = new Map<string, Finding>();
+  for (const finding of findings) {
+    if (!byId.has(finding.ruleId)) byId.set(finding.ruleId, finding);
+  }
+
+  return [...byId.values()].map((finding) => ({
+    id: finding.ruleId,
+    shortDescription: { text: finding.title },
+    defaultConfiguration: { level: levelFor(finding) },
+  }));
+}
+
 export function renderSarif(findings: Finding[]): string {
   const sarif = {
     $schema: "https://json.schemastore.org/sarif-2.1.0.json",
@@ -40,11 +53,7 @@ export function renderSarif(findings: Finding[]): string {
         tool: {
           driver: {
             name: "ScopeGraph",
-            rules: findings.map((finding) => ({
-              id: finding.ruleId,
-              shortDescription: { text: finding.title },
-              defaultConfiguration: { level: levelFor(finding) },
-            })),
+            rules: ruleDescriptors(findings),
           },
         },
         results: findings.map((finding) => ({
