@@ -75,12 +75,16 @@ Implemented today:
 - project-relative evidence paths so temporary or machine-specific roots do not leak into reports
 - root-independent capability comparison using `kind / source / target`
 - stable finding signatures so equivalent findings do not appear new just because a project moved
-- terminal, JSON, and GitHub-friendly Markdown diff output
+- terminal, JSON, GitHub-friendly Markdown, and SARIF 2.1.0 output
+- `scan --sarif` for full finding export
+- `diff --sarif` for newly introduced findings only
+- deduplicated SARIF rule descriptors with evidence-backed source locations
 - pull-request Authority Diff workflow using the PR base/head commit SHAs
-- read-only PR analysis with checkout credentials disabled after fetch
+- read-only PR authority analysis with checkout credentials disabled after fetch
 - GitHub Job Summary output for semantic authority changes
 - PR gating only when a newly introduced finding is `high` or `critical`
-- controlled positive, negative, unresolved, Git, and reporter integration fixtures
+- Code Scanning SARIF upload for trusted same-repository pull requests
+- controlled positive, negative, unresolved, Git, reporter, and CLI integration fixtures
 
 ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or `SKILL.md` coverage yet. Those layers are built incrementally on the same IR.
 
@@ -117,10 +121,14 @@ Machine-readable and GitHub-friendly output:
 
 ```bash
 node dist/cli/scan.js scan ./path/to/project --json
+node dist/cli/scan.js scan ./path/to/project --sarif
 node dist/cli/scan.js diff ./baseline ./candidate --json
 node dist/cli/scan.js diff main..feature --json
 node dist/cli/scan.js diff main..feature --markdown
+node dist/cli/scan.js diff main..feature --sarif
 ```
+
+`scan --sarif` exports all findings proved by that scan. `diff --sarif` exports only findings introduced by the candidate state, so pre-existing findings are not re-announced as new pull-request issues.
 
 ## Authority diff
 
@@ -177,7 +185,18 @@ A Job Summary can look like this:
 **Result: ❌ new high/critical finding detected**
 ```
 
-This repository-native workflow is the first CI integration. Packaging ScopeGraph as a reusable external GitHub Action is a later release step.
+### SARIF and Code Scanning
+
+ScopeGraph can emit SARIF 2.1.0 with repository-relative source locations:
+
+```bash
+scopegraph scan . --sarif
+scopegraph diff main..feature --sarif
+```
+
+For pull requests, the repository keeps privileged SARIF upload separate from the read-only authority gate. The `ScopeGraph Code Scanning` workflow runs only when the pull request head belongs to this repository, generates SARIF from the exact base/head diff, and uploads it with GitHub's Code Scanning integration. Fork pull requests do not receive the `security-events: write` job; the read-only `Authority Diff` workflow still analyzes them.
+
+This repository-native integration is intentionally narrower than a reusable public GitHub Action. Packaging ScopeGraph for external repositories is a later release step.
 
 ## Scan example
 
@@ -301,13 +320,12 @@ ScopeGraph does not execute analyzed source code, imported project modules, MCP 
 
 Planned layers, in order:
 
-1. SARIF output and pull-request annotations
-2. MCP SDK tool-registration discovery and tool-level capability linking
-3. Claude Code, Codex, and `SKILL.md` frontends
-4. filesystem, secret-source, and network-send semantics in JS/TS
-5. composed-authority analysis across multiple tools
-6. interactive local HTML capability graph
-7. package/release hardening and a reusable GitHub Action
+1. MCP SDK tool-registration discovery and tool-level capability linking
+2. Claude Code, Codex, and `SKILL.md` frontends
+3. filesystem, secret-source, and network-send semantics in JS/TS
+4. composed-authority analysis across multiple tools
+5. interactive local HTML capability graph
+6. package/release hardening and a reusable GitHub Action
 
 The roadmap is intentionally incremental: a feature only ships when its positive, negative, and unresolved cases are reproducible.
 
