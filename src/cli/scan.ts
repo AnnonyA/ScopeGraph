@@ -5,16 +5,25 @@ import { pathToFileURL } from "node:url";
 import { detectFindings, type Finding } from "../analysis/findings.ts";
 import { discoverProject } from "../discovery/discoverProject.ts";
 import { analyzeModuleSource } from "../frontends/javascript/analyzeModule.ts";
+import { analyzeMcpConfig } from "../frontends/mcp/analyzeMcpConfig.ts";
 import { AgentGraph } from "../ir/graph.ts";
-import type { Diagnostic } from "../ir/types.ts";
+import type { Capability, Diagnostic } from "../ir/types.ts";
 import { renderJson } from "../reporters/json.ts";
 import { renderTerminal } from "../reporters/terminal.ts";
 
 export interface ScanReport {
   root: string;
   filesAnalyzed: number;
+  mcpServers: number;
+  capabilities: Capability[];
   findings: Finding[];
   diagnostics: Diagnostic[];
+}
+
+function capabilityOrder(a: Capability, b: Capability): number {
+  return `${a.source}:${a.kind}:${a.target}`.localeCompare(
+    `${b.source}:${b.kind}:${b.target}`,
+  );
 }
 
 export async function scanProject(root: string): Promise<ScanReport> {
@@ -23,6 +32,8 @@ export async function scanProject(root: string): Promise<ScanReport> {
   const sources = new Set<string>();
   const sinks = new Set<string>();
   const diagnostics: Diagnostic[] = [];
+  const capabilities: Capability[] = [];
+  const mcpServerIds = new Set<string>();
 
   for (const file of project.sourceFiles) {
     const source = await readFile(file, "utf8");
@@ -33,9 +44,22 @@ export async function scanProject(root: string): Promise<ScanReport> {
     diagnostics.push(...analysis.diagnostics);
   }
 
+  for (const file of project.mcpFiles) {
+    const source = await readFile(file, "utf8");
+    const analysis = analyzeMcpConfig(file, source);
+    graph.merge(analysis.graph);
+    capabilities.push(...analysis.capabilities);
+    for (const id of analysis.serverIds) mcpServerIds.add(id);
+    diagnostics.push(...analysis.diagnostics);
+  }
+
+  capabilities.sort(capabilityOrder);
+
   return {
     root: project.root,
     filesAnalyzed: project.sourceFiles.length,
+    mcpServers: mcpServerIds.size,
+    capabilities,
     findings: detectFindings(graph, sources, sinks),
     diagnostics,
   };

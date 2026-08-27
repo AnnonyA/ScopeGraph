@@ -5,8 +5,17 @@ export function renderTerminal(report: ScanReport): string {
     "ScopeGraph",
     "",
     `Analyzed: ${report.filesAnalyzed} JavaScript / TypeScript file${report.filesAnalyzed === 1 ? "" : "s"}`,
+    `MCP servers: ${report.mcpServers}`,
+    `Capabilities: ${report.capabilities.length}`,
     `Findings: ${report.findings.length}`,
   ];
+
+  if (report.capabilities.length) {
+    lines.push("", "Authority");
+    for (const capability of report.capabilities) {
+      lines.push(`${capability.kind}  ${capability.source} -> ${capability.target}`);
+    }
+  }
 
   for (const finding of report.findings) {
     lines.push(
