@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { diffReports } from "../../src/analysis/diff.ts";
 
-const capability = (id: string, kind: "process.spawn" | "network.connect" | "environment.expose", source: string, target: string) => ({
+const capability = (
+  id: string,
+  kind: "process.spawn" | "shell.execute" | "network.connect" | "environment.expose",
+  source: string,
+  target: string,
+) => ({
   id,
   kind,
   source,
@@ -10,10 +15,26 @@ const capability = (id: string, kind: "process.spawn" | "network.connect" | "env
   evidence: [],
 });
 
-const report = (root: string, capabilities: ReturnType<typeof capability>[], findings: any[] = []) => ({
+const mcpTool = (id: string, name: string, capabilities: ReturnType<typeof capability>[]) => ({
+  id,
+  name,
+  server: "server",
+  sdkStyle: "v2" as const,
+  inputs: ["command"],
+  capabilities,
+  evidence: [],
+});
+
+const report = (
+  root: string,
+  capabilities: ReturnType<typeof capability>[],
+  findings: any[] = [],
+  mcpTools: ReturnType<typeof mcpTool>[] = [],
+) => ({
   root,
   filesAnalyzed: 0,
   mcpServers: 0,
+  mcpTools,
   capabilities,
   findings,
   diagnostics: [],
@@ -68,4 +89,35 @@ test("diffReports compares findings by stable semantic signature", () => {
 
   assert.deepEqual(diffReports(report("a", [], [findingA]), report("b", [], [findingB])).addedFindings, []);
   assert.deepEqual(diffReports(report("a", [], []), report("b", [], [findingB])).addedFindings.map((f) => f.ruleId), ["SG1001"]);
+});
+
+test("diffReports reports an existing MCP tool gaining authority as changed", () => {
+  const before = report("before", [], [], [mcpTool("before-run", "run", [])]);
+  const afterCapability = capability(
+    "after-shell",
+    "shell.execute",
+    "mcp-tool:run",
+    "child_process.exec",
+  );
+  const after = report("after", [afterCapability], [], [mcpTool("after-run", "run", [afterCapability])]);
+
+  const diff = diffReports(before, after);
+  assert.deepEqual(diff.addedTools, []);
+  assert.deepEqual(diff.removedTools, []);
+  assert.equal(diff.changedTools.length, 1);
+  assert.equal(diff.changedTools[0]?.name, "run");
+  assert.deepEqual(
+    diff.changedTools[0]?.addedCapabilities.map(({ kind }) => kind),
+    ["shell.execute"],
+  );
+  assert.deepEqual(diff.changedTools[0]?.removedCapabilities, []);
+});
+
+test("diffReports reports newly exposed MCP tools without classifying them as changed", () => {
+  const added = mcpTool("new-status", "status", []);
+  const diff = diffReports(report("before", [], [], []), report("after", [], [], [added]));
+
+  assert.deepEqual(diff.addedTools.map(({ name }) => name), ["status"]);
+  assert.deepEqual(diff.removedTools, []);
+  assert.deepEqual(diff.changedTools, []);
 });
