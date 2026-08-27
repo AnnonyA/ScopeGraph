@@ -32,3 +32,17 @@ test("renderSarif emits a GitHub-compatible SARIF result with the finding locati
     3,
   );
 });
+
+test("renderSarif defines each rule once while preserving every result", () => {
+  const second: Finding = {
+    ...finding,
+    signature: "SG1001\0request.command>child_process.exec",
+    pathLabels: ["request.command", "child_process.exec"],
+    evidence: [{ file: "src/other.ts", startLine: 8 }],
+  };
+  const sarif = JSON.parse(renderSarif([finding, second]));
+
+  assert.equal(sarif.runs[0].tool.driver.rules.length, 1);
+  assert.equal(sarif.runs[0].tool.driver.rules[0].id, "SG1001");
+  assert.equal(sarif.runs[0].results.length, 2);
+});
