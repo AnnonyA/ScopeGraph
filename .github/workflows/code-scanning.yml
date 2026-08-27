@@ -1,0 +1,44 @@
+name: ScopeGraph Code Scanning
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  sarif:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run build
+      - name: Generate new-finding SARIF
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          node dist/cli/scan.js diff "${BASE_SHA}..${HEAD_SHA}" --sarif > scopegraph.sarif
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            exit "$status"
+          fi
+          test -s scopegraph.sarif
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: scopegraph.sarif
+          category: scopegraph
