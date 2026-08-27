@@ -9,6 +9,7 @@ import { analyzeMcpConfig } from "../frontends/mcp/analyzeMcpConfig.ts";
 import { AgentGraph } from "../ir/graph.ts";
 import type { Capability, Diagnostic } from "../ir/types.ts";
 import { renderJson } from "../reporters/json.ts";
+import { renderSarif } from "../reporters/sarif.ts";
 import { renderTerminal } from "../reporters/terminal.ts";
 
 export interface ScanReport {
@@ -71,9 +72,20 @@ export async function scanProject(root: string): Promise<ScanReport> {
 
 async function runScan(args: string[]): Promise<void> {
   const json = args.includes("--json");
+  const sarif = args.includes("--sarif");
+  if (json && sarif) {
+    throw new Error("Choose only one scan output format: --json or --sarif");
+  }
+
   const root = args.find((arg, index) => index > 0 && !arg.startsWith("--")) ?? ".";
   const report = await scanProject(root);
-  process.stdout.write(json ? renderJson(report) : renderTerminal(report));
+  process.stdout.write(
+    sarif
+      ? renderSarif(report.findings)
+      : json
+        ? renderJson(report)
+        : renderTerminal(report),
+  );
   process.exitCode = report.findings.some(
     (finding) => finding.severity === "critical" || finding.severity === "high",
   ) ? 1 : 0;
