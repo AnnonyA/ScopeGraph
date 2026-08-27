@@ -14,7 +14,7 @@ It can also compare two project states and answer a more useful question than �
 
 > **What new authority did this change give the agent?**
 
-The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory MCP runtime authority, compare authority between project states, preserve evidence, and stay conservative when behavior cannot be resolved.
+The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory MCP runtime authority, compare authority between project states or Git revisions, preserve evidence, and stay conservative when behavior cannot be resolved.
 
 ```text
                  project
@@ -70,12 +70,15 @@ Implemented today:
 - explicit MCP environment-key exposure inventory
 - credential-safe reporting: environment values, command args, URL paths, query strings, and fragments are not retained in capability output
 - semantic authority diff between two project directories
+- Git revision authority diff using `base..head`
+- detached temporary worktrees with guaranteed cleanup for Git revision analysis
+- project-relative evidence paths so temporary or machine-specific roots do not leak into reports
 - root-independent capability comparison using `kind / source / target`
 - stable finding signatures so equivalent findings do not appear new just because a project moved
 - terminal and JSON output
-- controlled positive, negative, and unresolved fixtures
+- controlled positive, negative, unresolved, and Git integration fixtures
 
-ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or Git-revision materialization yet. Those layers are built incrementally on the same IR.
+ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or `SKILL.md` coverage yet. Those layers are built incrementally on the same IR.
 
 ## Quick start
 
@@ -94,17 +97,24 @@ Scan a project:
 node dist/cli/scan.js scan ./path/to/project
 ```
 
-Compare two project states:
+Compare two project directories:
 
 ```bash
 node dist/cli/scan.js diff ./baseline ./candidate
 ```
 
-Machine-readable output works for both commands:
+Compare two Git revisions from inside a repository:
+
+```bash
+node dist/cli/scan.js diff main..feature
+```
+
+Machine-readable output works for scan and both diff modes:
 
 ```bash
 node dist/cli/scan.js scan ./path/to/project --json
 node dist/cli/scan.js diff ./baseline ./candidate --json
+node dist/cli/scan.js diff main..feature --json
 ```
 
 ## Authority diff
@@ -114,12 +124,12 @@ node dist/cli/scan.js diff ./baseline ./candidate --json
 Given a baseline that can only launch a local MCP server and a candidate that adds a remote MCP endpoint plus a newly reachable shell path:
 
 ```text
-$ scopegraph diff ./baseline ./candidate
+$ scopegraph diff main..feature
 
 ScopeGraph Authority Diff
 
-Before: ./baseline
-After:  ./candidate
+Before: main
+After:  feature
 
 Added authority
 + network.connect  docs -> https://mcp.example.com
@@ -128,9 +138,9 @@ New findings
 + CRITICAL SG1001  Untrusted content reaches shell execution
 ```
 
-Comparison is semantic. Two equivalent capabilities with different graph IDs or project roots are treated as the same authority.
+Comparison is semantic. Two equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority.
 
-The current command compares two directories. Git-native revision syntax such as `scopegraph diff main..feature` is planned as a layer on top of the same comparison engine.
+For Git ranges, ScopeGraph resolves both revisions to commits, materializes detached temporary worktrees, analyzes them statically, normalizes evidence back to project-relative paths, and removes the worktrees afterward. The current checkout is not switched or modified by the comparison.
 
 ## Scan example
 
@@ -194,31 +204,31 @@ It does not keep the environment value, command arguments, URL path, query strin
 ## How it works
 
 ```text
-source tree
-    │
-    ▼
-discovery
-    │
-    ├──────────────► JS / TS frontend
-    │
-    └──────────────► MCP config frontend
-                        │
-                        ▼
-                Agent IR + evidence graph
-                        │
-                        ▼
-              reachability / authority
-                        │
-                  ┌─────┴─────┐
-                  ▼           ▼
-              findings   capabilities
-                  │           │
-                  └─────┬─────┘
-                        ▼
-                semantic snapshots
-                        │
-                        ▼
-                 authority diff
+source tree / Git revisions
+          │
+          ▼
+      discovery
+          │
+          ├──────────────► JS / TS frontend
+          │
+          └──────────────► MCP config frontend
+                              │
+                              ▼
+                      Agent IR + evidence graph
+                              │
+                              ▼
+                    reachability / authority
+                              │
+                        ┌─────┴─────┐
+                        ▼           ▼
+                    findings   capabilities
+                        │           │
+                        └─────┬─────┘
+                              ▼
+                      semantic snapshots
+                              │
+                              ▼
+                       authority diff
 ```
 
 Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later MCP-tool, skill, and agent-configuration support can reuse the same graph instead of duplicating security logic.
@@ -248,18 +258,18 @@ If ScopeGraph cannot resolve a dynamic target safely, it records an unresolved d
 
 ## Safety model
 
-ScopeGraph does not execute analyzed source code, imported project modules, MCP servers, discovered hooks, or shell commands. The analyzer only reads project files and parses supported syntax/configuration statically.
+ScopeGraph does not execute analyzed source code, imported project modules, MCP servers, discovered hooks, or shell commands. The analyzer only reads project files and parses supported syntax/configuration statically. Git revision diff uses Git itself only to resolve revisions and materialize detached worktrees for reading.
 
 ## Roadmap
 
 Planned layers, in order:
 
-1. Git-native `main..feature` authority diff and PR integration
-2. MCP SDK tool-registration discovery and tool-level capability linking
-3. Claude Code, Codex, and `SKILL.md` frontends
-4. filesystem, secret-source, and network-send semantics in JS/TS
-5. composed-authority analysis across multiple tools
-6. SARIF output and pull-request annotations
+1. pull-request integration and CI-friendly authority-change reporting
+2. SARIF output and pull-request annotations
+3. MCP SDK tool-registration discovery and tool-level capability linking
+4. Claude Code, Codex, and `SKILL.md` frontends
+5. filesystem, secret-source, and network-send semantics in JS/TS
+6. composed-authority analysis across multiple tools
 7. interactive local HTML capability graph
 
 The roadmap is intentionally incremental: a feature only ships when its positive, negative, and unresolved cases are reproducible.
