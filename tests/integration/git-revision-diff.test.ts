@@ -97,3 +97,40 @@ test("Git diff CLI emits GitHub Markdown when --markdown is requested", async ()
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Git diff CLI SARIF excludes findings that already existed in the baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopegraph-git-sarif-"));
+  try {
+    await git(root, ["init", "-b", "main"]);
+    await git(root, ["config", "user.email", "scopegraph@example.test"]);
+    await git(root, ["config", "user.name", "ScopeGraph Tests"]);
+    await writeFile(join(root, "tool.ts"), [
+      'import { exec } from "node:child_process";',
+      "export function run(input: { command: string }) {",
+      "  exec(input.command);",
+      "}",
+      "",
+    ].join("\n"));
+    await git(root, ["add", "."]);
+    await git(root, ["commit", "-m", "baseline with finding"]);
+
+    await git(root, ["switch", "-c", "feature"]);
+    await writeFile(join(root, "README.md"), "unrelated change\n");
+    await git(root, ["add", "."]);
+    await git(root, ["commit", "-m", "unrelated change"]);
+    await git(root, ["switch", "main"]);
+
+    const cli = resolve("src/cli/scan.ts");
+    const result = await execFileAsync(
+      process.execPath,
+      ["--experimental-strip-types", cli, "diff", "main..feature", "--sarif"],
+      { cwd: root, encoding: "utf8" },
+    );
+    const sarif = JSON.parse(String(result.stdout));
+
+    assert.equal(sarif.version, "2.1.0");
+    assert.deepEqual(sarif.runs[0].results, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
