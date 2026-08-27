@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { diffGitRange } from "../../src/git/revisions.ts";
@@ -68,6 +68,31 @@ test("diffGitRange compares detached revisions, keeps evidence relative, and cle
 
     const worktrees = await git(root, ["worktree", "list", "--porcelain"]);
     assert.equal(worktrees.split("\n").filter((line) => line.startsWith("worktree ")).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Git diff CLI emits GitHub Markdown when --markdown is requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopegraph-git-cli-"));
+  try {
+    await git(root, ["init", "-b", "main"]);
+    await git(root, ["config", "user.email", "scopegraph@example.test"]);
+    await git(root, ["config", "user.name", "ScopeGraph Tests"]);
+    await writeFile(join(root, "README.md"), "fixture\n");
+    await git(root, ["add", "."]);
+    await git(root, ["commit", "-m", "baseline"]);
+
+    const cli = resolve("src/cli/scan.ts");
+    const result = await execFileAsync(
+      process.execPath,
+      ["--experimental-strip-types", cli, "diff", "main..main", "--markdown"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    const stdout = String(result.stdout);
+    assert.match(stdout, /^## ScopeGraph Authority Diff/m);
+    assert.match(stdout, /Result: ✅ no new high\/critical findings/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
