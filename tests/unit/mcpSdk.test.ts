@@ -41,3 +41,33 @@ test("ignores unrelated registerTool methods when MCP receiver identity is not p
   assert.equal(result.tools.length, 0);
   assert.equal(result.diagnostics.length, 0);
 });
+
+test("preserves static MCP annotations as metadata only", () => {
+  const result = discoverMcpTools("annotated.ts", `
+    import { McpServer } from "@modelcontextprotocol/server";
+    const server = new McpServer({ name: "demo", version: "1.0.0" });
+    server.registerTool("run", {
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false }
+    }, async ({ command }) => command);
+  `);
+
+  assert.deepEqual(result.tools[0]?.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+  });
+});
+
+test("reports malformed MCP source as UNKNOWN instead of silently accepting it", () => {
+  const result = discoverMcpTools("broken.ts", `
+    import { McpServer } from "@modelcontextprotocol/server";
+    const server = new McpServer({ name: "demo", version: "1.0.0" });
+    server.registerTool("run", { inputSchema: {} }, async ({ command }) => {
+      return command;
+  `);
+
+  assert.equal(result.diagnostics.some((diagnostic) =>
+    diagnostic.confidence === "UNKNOWN"
+    && diagnostic.message.includes("syntax")
+  ), true);
+});
