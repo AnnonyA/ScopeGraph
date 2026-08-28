@@ -75,6 +75,10 @@ function instructionKey(instruction: AgentInstruction): string {
   return `${instruction.kind}\0${instruction.file}`;
 }
 
+function instructionSortKey(instruction: AgentInstruction): string {
+  return `${instruction.file}\0${instruction.kind}`;
+}
+
 function allowedTools(instruction: AgentInstruction): string[] {
   return [...(instruction.skill?.allowedTools ?? [])].sort();
 }
@@ -186,11 +190,11 @@ function instructionDelta(
 
   const added = [...afterByKey]
     .filter(([key]) => !beforeByKey.has(key))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([, a], [, b]) => instructionSortKey(a).localeCompare(instructionSortKey(b)))
     .map(([, instruction]) => instruction);
   const removed = [...beforeByKey]
     .filter(([key]) => !afterByKey.has(key))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([, a], [, b]) => instructionSortKey(a).localeCompare(instructionSortKey(b)))
     .map(([, instruction]) => instruction);
 
   const changed = [...afterByKey]
@@ -199,7 +203,7 @@ function instructionDelta(
       return previous !== undefined
         && instructionStateKey(previous) !== instructionStateKey(instruction);
     })
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([, a], [, b]) => instructionSortKey(a).localeCompare(instructionSortKey(b)))
     .map(([key, instruction]) => {
       const previous = beforeByKey.get(key)!;
       const imports = stringDelta(previous.imports, instruction.imports);
