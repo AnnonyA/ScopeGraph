@@ -88,3 +88,24 @@ export interface McpTool {
   capabilities: Capability[];
   evidence: Evidence[];
 }
+
+export type AgentInstructionKind = "codex" | "claude" | "skill";
+
+export interface SkillMetadata {
+  name: string;
+  description: string;
+  license?: string;
+  compatibility?: string;
+  allowedTools?: string[];
+}
+
+export interface AgentInstruction {
+  id: string;
+  kind: AgentInstructionKind;
+  file: string;
+  scope: string;
+  precedence?: "normal" | "override";
+  imports: string[];
+  skill?: SkillMetadata;
+  evidence: Evidence[];
+}
