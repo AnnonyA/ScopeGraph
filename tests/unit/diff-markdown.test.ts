@@ -3,6 +3,30 @@ import test from "node:test";
 import { renderDiffMarkdown } from "../../src/reporters/diffMarkdown.ts";
 import type { AuthorityDiff } from "../../src/analysis/diff.ts";
 
+const shellCapability = {
+  id: "cap-shell",
+  kind: "shell.execute" as const,
+  source: "mcp-tool:run",
+  target: "child_process.exec",
+  evidence: [{ file: "src/server.ts", startLine: 12 }],
+};
+
+const beforeTool = {
+  id: "tool-before",
+  name: "run",
+  server: "server",
+  sdkStyle: "v2" as const,
+  inputs: ["command"],
+  capabilities: [],
+  evidence: [{ file: "src/server.ts", startLine: 6 }],
+};
+
+const afterTool = {
+  ...beforeTool,
+  id: "tool-after",
+  capabilities: [shellCapability],
+};
+
 const diff: AuthorityDiff = {
   beforeRoot: "base-sha",
   afterRoot: "head-sha",
@@ -22,13 +46,27 @@ const diff: AuthorityDiff = {
       title: "Untrusted content reaches shell execution",
       severity: "critical",
       confidence: "PROVEN",
-      signature: "SG1001\0input.command>child_process.exec",
-      pathLabels: ["input.command", "child_process.exec"],
+      signature: "SG1001\0run.command>child_process.exec",
+      pathLabels: ["run.command", "child_process.exec"],
       path: { nodes: ["source", "sink"], edges: [] },
-      evidence: [{ file: "src/tool.ts", startLine: 3 }],
+      evidence: [{ file: "src/server.ts", startLine: 12 }],
     },
   ],
   removedFindings: [],
+  addedTools: [],
+  removedTools: [],
+  changedTools: [
+    {
+      name: "run",
+      server: "server",
+      before: beforeTool,
+      after: afterTool,
+      addedCapabilities: [shellCapability],
+      removedCapabilities: [],
+      addedInputs: [],
+      removedInputs: [],
+    },
+  ],
 };
 
 test("renderDiffMarkdown creates a GitHub-friendly authority summary", () => {
@@ -38,9 +76,12 @@ test("renderDiffMarkdown creates a GitHub-friendly authority summary", () => {
   assert.match(markdown, /### Added authority/);
   assert.match(markdown, /`network\.connect`/);
   assert.match(markdown, /docs → `https:\/\/mcp\.example\.com`/);
+  assert.match(markdown, /### Changed MCP tools/);
+  assert.match(markdown, /#### `run`/);
+  assert.match(markdown, /\+ `shell\.execute`/);
   assert.match(markdown, /### New findings/);
   assert.match(markdown, /CRITICAL `SG1001`/);
-  assert.match(markdown, /src\/tool\.ts:3/);
+  assert.match(markdown, /src\/server\.ts:12/);
   assert.match(markdown, /Result: ❌ new high\/critical finding detected/);
 });
 
@@ -52,6 +93,9 @@ test("renderDiffMarkdown reports a clean semantic diff without pretending nothin
     removedCapabilities: [],
     addedFindings: [],
     removedFindings: [],
+    addedTools: [],
+    removedTools: [],
+    changedTools: [],
   });
 
   assert.match(markdown, /No semantic authority changes detected\./);

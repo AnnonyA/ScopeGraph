@@ -43,6 +43,50 @@ export function renderDiffMarkdown(diff: AuthorityDiff): string {
     }
   }
 
+  if (diff.addedTools.length) {
+    lines.push("", "### Added MCP tools");
+    for (const tool of diff.addedTools) {
+      lines.push(`- ${inlineCode(tool.name)} (${tool.sdkStyle})`);
+      for (const capability of tool.capabilities) {
+        lines.push(`  - ${inlineCode(capability.kind)} → ${inlineCode(capability.target)}`);
+      }
+    }
+  }
+
+  if (diff.removedTools.length) {
+    lines.push("", "### Removed MCP tools");
+    for (const tool of diff.removedTools) {
+      lines.push(`- ${inlineCode(tool.name)} (${tool.sdkStyle})`);
+    }
+  }
+
+  if (diff.changedTools.length) {
+    lines.push("", "### Changed MCP tools");
+    for (const tool of diff.changedTools) {
+      lines.push("", `#### ${inlineCode(tool.name)}`);
+      if (tool.addedCapabilities.length) {
+        lines.push("", "Added authority:");
+        for (const capability of tool.addedCapabilities) {
+          lines.push(`- + ${inlineCode(capability.kind)} → ${inlineCode(capability.target)}`);
+        }
+      }
+      if (tool.removedCapabilities.length) {
+        lines.push("", "Removed authority:");
+        for (const capability of tool.removedCapabilities) {
+          lines.push(`- - ${inlineCode(capability.kind)} → ${inlineCode(capability.target)}`);
+        }
+      }
+      if (tool.addedInputs.length) {
+        lines.push("", "Added inputs:");
+        for (const input of tool.addedInputs) lines.push(`- + ${inlineCode(input)}`);
+      }
+      if (tool.removedInputs.length) {
+        lines.push("", "Removed inputs:");
+        for (const input of tool.removedInputs) lines.push(`- - ${inlineCode(input)}`);
+      }
+    }
+  }
+
   if (diff.addedFindings.length) {
     lines.push("", "### New findings");
     for (const finding of diff.addedFindings) {
@@ -65,7 +109,10 @@ export function renderDiffMarkdown(diff: AuthorityDiff): string {
     diff.addedCapabilities.length > 0
     || diff.removedCapabilities.length > 0
     || diff.addedFindings.length > 0
-    || diff.removedFindings.length > 0;
+    || diff.removedFindings.length > 0
+    || diff.addedTools.length > 0
+    || diff.removedTools.length > 0
+    || diff.changedTools.length > 0;
 
   if (!changed) {
     lines.push("", "No semantic authority changes detected.");
