@@ -34,7 +34,10 @@ export type EdgeKind =
 export type CapabilityKind =
   | "process.spawn"
   | "shell.execute"
+  | "filesystem.write"
+  | "environment.read"
   | "network.connect"
+  | "network.send"
   | "environment.expose";
 
 export interface Evidence {
