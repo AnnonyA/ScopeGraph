@@ -87,6 +87,51 @@ export function renderDiffMarkdown(diff: AuthorityDiff): string {
     }
   }
 
+  if (diff.addedInstructions.length) {
+    lines.push("", "### Added agent instructions");
+    for (const instruction of diff.addedInstructions) {
+      lines.push(
+        `- ${inlineCode(instruction.kind)} ${inlineCode(instruction.file)} — scope ${inlineCode(instruction.scope)}`,
+      );
+      if (instruction.imports.length) {
+        lines.push(`  - imports: ${instruction.imports.map(inlineCode).join(", ")}`);
+      }
+      if (instruction.skill?.allowedTools?.length) {
+        lines.push(`  - allowed tools: ${instruction.skill.allowedTools.map(inlineCode).join(", ")}`);
+      }
+    }
+  }
+
+  if (diff.removedInstructions.length) {
+    lines.push("", "### Removed agent instructions");
+    for (const instruction of diff.removedInstructions) {
+      lines.push(
+        `- ${inlineCode(instruction.kind)} ${inlineCode(instruction.file)} — scope ${inlineCode(instruction.scope)}`,
+      );
+    }
+  }
+
+  if (diff.changedInstructions.length) {
+    lines.push("", "### Changed agent instructions");
+    for (const instruction of diff.changedInstructions) {
+      lines.push("", `#### ${inlineCode(instruction.file)}`);
+      lines.push(`- kind: ${inlineCode(instruction.kind)}`);
+      if (instruction.contentChanged) lines.push("- content changed");
+      for (const imported of instruction.addedImports) {
+        lines.push(`- + import ${inlineCode(imported)}`);
+      }
+      for (const imported of instruction.removedImports) {
+        lines.push(`- - import ${inlineCode(imported)}`);
+      }
+      for (const tool of instruction.addedAllowedTools) {
+        lines.push(`- + allowed tool ${inlineCode(tool)}`);
+      }
+      for (const tool of instruction.removedAllowedTools) {
+        lines.push(`- - allowed tool ${inlineCode(tool)}`);
+      }
+    }
+  }
+
   if (diff.addedFindings.length) {
     lines.push("", "### New findings");
     for (const finding of diff.addedFindings) {
@@ -112,7 +157,10 @@ export function renderDiffMarkdown(diff: AuthorityDiff): string {
     || diff.removedFindings.length > 0
     || diff.addedTools.length > 0
     || diff.removedTools.length > 0
-    || diff.changedTools.length > 0;
+    || diff.changedTools.length > 0
+    || diff.addedInstructions.length > 0
+    || diff.removedInstructions.length > 0
+    || diff.changedInstructions.length > 0;
 
   if (!changed) {
     lines.push("", "No semantic authority changes detected.");
