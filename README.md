@@ -8,33 +8,33 @@
 
 > **ScopeGraph reports paths, not vibes.**
 
-ScopeGraph is a local-first static analyzer for reasoning about what AI-agent tooling can actually reach. Instead of flagging isolated API names, it builds an evidence-backed graph and looks for demonstrable source-to-sink paths.
+ScopeGraph is a local-first static analyzer for reasoning about what AI-agent tooling can actually reach. Instead of flagging isolated API names, it builds evidence-backed semantic state and looks for demonstrable source-to-sink paths.
 
 It can also compare two project states and answer a more useful question than “what lines changed?”:
 
-> **What new authority did this change give the agent?**
+> **What changed in the agent's effective authority and control surface?**
 
-The current core analyzes JavaScript/TypeScript execution flows, common MCP JSON configuration, and common MCP SDK tool-registration patterns. It can discover MCP tools and their inputs, link proven process authority back to the tool that exposes it, prove when untrusted tool input reaches Node.js execution APIs, compare tool-level authority between project states or Git revisions, preserve evidence, and stay conservative when behavior cannot be resolved.
+The current core analyzes JavaScript/TypeScript execution flows, common MCP JSON configuration, MCP SDK tool registrations, Codex instruction files, Claude instruction files, and Agent Skills metadata. It can connect proven MCP tool input to execution sinks, inventory scoped agent instructions without treating free-form prose as proof, and compare tool/instruction state between directories or Git revisions.
 
 ```text
-                 project
-                    │
-        ┌───────────┼───────────┐
-        ▼           ▼           ▼
-     JS / TS     MCP config   MCP SDK tools
-        │           │           │
-        │      runtime auth   tool inputs
-        │           │           │
-        └───────────┴─────┬─────┘
-                          ▼
-                 Agent IR + evidence
-                          │
-                          ▼
-               authority / reachability
-                          │
-                   ┌──────┴──────┐
-                   ▼             ▼
-                 scan           diff
+                         project
+                            │
+       ┌────────────┬───────┼─────────┬────────────┐
+       ▼            ▼       ▼         ▼            ▼
+    JS / TS     MCP config  MCP SDK  AGENTS /    CLAUDE /
+                            tools    overrides    SKILL.md
+       │            │       │         │            │
+       └────────────┴───────┴─────────┴─────┬──────┘
+                                             ▼
+                                  Agent IR + evidence
+                                             │
+                                  ┌──────────┴──────────┐
+                                  ▼                     ▼
+                          authority / paths      semantic inventory
+                                  │                     │
+                                  └──────────┬──────────┘
+                                             ▼
+                                      scan / diff
 ```
 
 ## Why ScopeGraph
@@ -52,6 +52,8 @@ ScopeGraph is designed around four rules:
 
 Implemented today:
 
+### Program and authority analysis
+
 - deterministic Agent IR nodes and evidence edges
 - cycle-safe reachability analysis
 - deterministic JavaScript / TypeScript project discovery
@@ -64,6 +66,9 @@ Implemented today:
 - basic taint propagation through identifiers, properties, assignments, binary expressions, and templates
 - `UNKNOWN` diagnostics for unresolved computed call targets
 - `SG1001` — **Untrusted content reaches shell execution**
+
+### MCP configuration and tools
+
 - `.mcp.json` / `mcp.json` discovery
 - common `mcpServers` configuration parsing
 - MCP stdio `process.spawn` capability extraction
@@ -79,7 +84,23 @@ Implemented today:
 - partial MCP analysis with `UNKNOWN` diagnostics for dynamic registration config or incomplete syntax
 - proven MCP tool input → `exec` paths attributed back to the exposed tool
 - per-tool capability inventory in scan reports
-- terminal and JSON output for discovered MCP tools, inputs, and capabilities
+
+### Agent instruction frontends
+
+- hierarchical Codex `AGENTS.md` discovery
+- `AGENTS.override.md` discovery with explicit override precedence
+- directory scope preserved for Codex instruction files
+- hierarchical Claude `CLAUDE.md` discovery
+- literal Claude `@path` import extraction outside fenced/inline Markdown code examples
+- Agent Skills `SKILL.md` YAML frontmatter parsing
+- required skill `name` / `description` validation
+- optional `license`, `compatibility`, and `allowed-tools` metadata
+- malformed or incomplete skill metadata becomes `UNKNOWN` instead of a usable skill
+- SHA-256 content fingerprints for deterministic change detection without retaining Markdown bodies in semantic snapshots
+- free-form instruction text is **not** converted into `PROVEN` authority merely because it mentions commands, tools, or sensitive actions
+
+### Semantic diff and reporting
+
 - semantic authority diff between two project directories
 - Git revision authority diff using `base..head`
 - detached temporary worktrees with guaranteed cleanup for Git revision analysis
@@ -88,19 +109,25 @@ Implemented today:
 - stable finding signatures so equivalent findings do not appear new just because a project moved
 - semantic MCP tool diff with `added`, `removed`, and `changed` tools
 - capability/input deltas for tools whose semantic identity remains stable
-- terminal, JSON, GitHub-friendly Markdown, and SARIF 2.1.0 output
-- MCP tool deltas in terminal and pull-request Markdown summaries
+- semantic agent-instruction diff with `added`, `removed`, and `changed` files
+- content-change detection for `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`, and `SKILL.md`
+- import deltas for Claude instructions and `allowed-tools` deltas for skills
+- terminal and JSON scan output for tools, instructions, scopes, imports, and capabilities
+- terminal, JSON, and GitHub-friendly Markdown diff output
+- SARIF 2.1.0 output for findings
 - `scan --sarif` for full finding export
 - `diff --sarif` for newly introduced findings only
 - deduplicated SARIF rule descriptors with evidence-backed source locations
-- pull-request Authority Diff workflow using the PR base/head commit SHAs
+
+### Pull-request integration
+
+- pull-request Authority Diff workflow using exact PR base/head commit SHAs
 - read-only PR authority analysis with checkout credentials disabled after fetch
-- GitHub Job Summary output for semantic authority changes
+- GitHub Job Summary output for semantic authority and instruction changes
 - PR gating only when a newly introduced finding is `high` or `critical`
 - Code Scanning SARIF upload for trusted same-repository pull requests
-- controlled positive, negative, unresolved, Git, reporter, and CLI integration fixtures
 
-ScopeGraph does **not** claim exhaustive MCP semantics or arbitrary JavaScript metaprogramming support. Dynamic names, unresolved handlers, and unsupported registration shapes remain conservative `UNKNOWN` territory. Claude Code, Codex, and `SKILL.md` frontends are not implemented yet.
+ScopeGraph does **not** claim exhaustive MCP semantics, arbitrary JavaScript metaprogramming support, or semantic understanding of arbitrary Markdown instructions. Dynamic names, unresolved handlers, malformed metadata, and unsupported registration shapes remain conservative `UNKNOWN` territory.
 
 ## Quick start
 
@@ -169,9 +196,9 @@ The tool input is treated as an untrusted source, the execution API is modeled a
 MCP tools: 1
 
 MCP tools
-run [v2]
-  Inputs: command
-  Capabilities: shell.execute
+run (v2)
+  input: command
+  shell.execute -> child_process.exec
 
 CRITICAL SG1001
 Untrusted content reaches shell execution
@@ -180,23 +207,48 @@ Confidence: PROVEN
 
 Annotations such as `readOnlyHint` are retained as metadata, but they do not suppress authority proved from the implementation. If ScopeGraph can prove the tool and handler while only the registration config is dynamic, it keeps the proven portion and emits an `UNKNOWN` diagnostic for the unresolved metadata/schema portion.
 
-## Authority diff
+## Agent instruction inventory
 
-**Detect authority changes, not just line changes.**
+ScopeGraph recognizes structural facts from common agent instruction formats without pretending to understand arbitrary prose.
 
-Given a baseline tool with no process authority and a candidate where the same tool gains shell execution:
+Given a project with:
 
 ```text
-$ scopegraph diff main..feature
+AGENTS.md
+packages/api/AGENTS.override.md
+packages/api/CLAUDE.md
+.agents/skills/review/SKILL.md
+```
 
+A scan can report:
+
+```text
+Agent instructions: 4
+
+Agent instructions
+skill  .agents/skills/review/SKILL.md  scope=.agents/skills/review
+  name: review
+  allowed tools: Read, Grep
+codex  AGENTS.md  scope=.  precedence=normal
+codex  packages/api/AGENTS.override.md  scope=packages/api  precedence=override
+claude  packages/api/CLAUDE.md  scope=packages/api
+  imports: README.md
+```
+
+ScopeGraph stores a deterministic content fingerprint for change detection, not the full Markdown body in the semantic snapshot. A sentence such as “run whatever commands are needed” is therefore inventory data, **not a proven shell capability**. Authority still requires supported code/configuration evidence.
+
+## Semantic diff
+
+**Detect authority and control-surface changes, not just line changes.**
+
+An existing MCP tool gaining shell execution can produce:
+
+```text
 ScopeGraph Authority Diff
 
-Before: main
-After:  feature
-
 Changed MCP tools
-~ workspace:run
-  + capability shell.execute
+~ run
+  + shell.execute -> child_process.exec
 
 Added authority
 + shell.execute  mcp-tool:run -> child_process.exec
@@ -205,13 +257,28 @@ New findings
 + CRITICAL SG1001  Untrusted content reaches shell execution
 ```
 
-Comparison is semantic. Two equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority. Existing tools that gain or lose inputs/capabilities are reported as changed rather than as unrelated remove/add noise.
+Instruction changes are tracked separately:
+
+```text
+Added agent instructions
++ claude  packages/api/CLAUDE.md  scope=packages/api
+
+Changed agent instructions
+~ codex  AGENTS.md
+  content changed
+
+~ skill  .agents/skills/review/SKILL.md
+  content changed
+  + allowed tool Grep
+```
+
+Comparison is semantic. Equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority. Existing tools retain identity across internal changes; instruction files retain identity by ecosystem kind and repository-relative path.
 
 For Git ranges, ScopeGraph resolves both revisions to commits, materializes detached temporary worktrees, analyzes them statically, normalizes evidence back to project-relative paths, and removes the worktrees afterward. The current checkout is not switched or modified by the comparison.
 
 ## Pull request integration
 
-ScopeGraph dogfoods its own authority analysis on pull requests to `main`.
+ScopeGraph dogfoods its own analysis on pull requests to `main`.
 
 The `Authority Diff` workflow:
 
@@ -219,26 +286,11 @@ The `Authority Diff` workflow:
 2. disables persisted checkout credentials;
 3. builds ScopeGraph locally;
 4. compares the exact pull-request base and head commit SHAs;
-5. writes a Markdown authority report to the GitHub Job Summary;
-6. exits successfully for informational authority changes;
-7. fails when the PR introduces a new `high` or `critical` finding.
+5. writes a Markdown semantic report to the GitHub Job Summary;
+6. reports tool and instruction changes informationally;
+7. fails only when the PR introduces a new `high` or `critical` finding.
 
 The workflow uses only `contents: read` permission. It does not post comments, modify pull requests, push commits, or require a separate API token.
-
-A Job Summary can look like this:
-
-```markdown
-## ScopeGraph Authority Diff
-
-### Changed MCP tools
-- `workspace:run`
-  - added capability: `shell.execute`
-
-### New findings
-- CRITICAL `SG1001` — Untrusted content reaches shell execution — `src/tool.ts:3`
-
-**Result: ❌ new high/critical finding detected**
-```
 
 ### SARIF and Code Scanning
 
@@ -253,31 +305,7 @@ For pull requests, the repository keeps privileged SARIF upload separate from th
 
 This repository-native integration is intentionally narrower than a reusable public GitHub Action. Packaging ScopeGraph for external repositories is a later release step.
 
-## Scan example
-
-```text
-ScopeGraph
-
-Analyzed: 1 JavaScript / TypeScript file
-MCP servers: 1
-MCP tools: 1
-Capabilities: 1
-Findings: 1
-
-MCP tools
-run [v2]
-  Inputs: command
-  Capabilities: shell.execute
-
-Authority
-shell.execute  mcp-tool:run -> child_process.exec
-
-CRITICAL SG1001
-Untrusted content reaches shell execution
-Confidence: PROVEN
-```
-
-Exit codes:
+## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
@@ -316,74 +344,17 @@ network.connect      docs      -> https://mcp.example.com
 
 It does not keep the environment value, command arguments, URL path, query string, or fragment in the capability report.
 
-## How it works
-
-```text
-source tree / Git revisions
-          │
-          ▼
-      discovery
-          │
-          ├──────────────► JS / TS frontend
-          │
-          ├──────────────► MCP config frontend
-          │
-          └──────────────► MCP SDK tool frontend
-                              │
-                              ▼
-                      Agent IR + evidence graph
-                              │
-                              ▼
-                    reachability / authority
-                              │
-                        ┌─────┴─────┐
-                        ▼           ▼
-                    findings   capabilities
-                        │           │
-                        └─────┬─────┘
-                              ▼
-                      semantic snapshots
-                              │
-                              ▼
-                       authority diff
-```
-
-Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later skill and agent-configuration support can reuse the same graph instead of duplicating security logic.
-
-## JavaScript example
-
-This is reported because the command originates from a function parameter:
-
-```ts
-import { exec } from "node:child_process";
-
-export function run(input: { command: string }) {
-  const command = input.command;
-  exec(command);
-}
-```
-
-This is not reported as `SG1001` because the command is static:
-
-```ts
-import { exec } from "node:child_process";
-
-exec("npm test");
-```
-
-If ScopeGraph cannot resolve a dynamic target safely, it records an unresolved diagnostic instead of guessing.
-
 ## Safety model
 
-ScopeGraph does not execute analyzed source code, imported project modules, MCP servers, discovered hooks, or shell commands. The analyzer only reads project files and parses supported syntax/configuration statically. Git revision diff uses Git itself only to resolve revisions and materialize detached worktrees for reading.
+ScopeGraph does not execute analyzed source code, imported project modules, MCP servers, discovered hooks, agent instructions, skills, or shell commands. The analyzer only reads project files and parses supported syntax/configuration statically. Git revision diff uses Git itself only to resolve revisions and materialize detached worktrees for reading.
 
 ## Roadmap
 
 Planned layers, in order:
 
-1. Claude Code, Codex, and `SKILL.md` frontends
-2. filesystem, secret-source, and network-send semantics in JS/TS
-3. composed-authority analysis across multiple tools
+1. filesystem, secret-source, and network-send semantics in JavaScript/TypeScript
+2. richer structured references between agent instructions, skills, MCP tools, and executable code
+3. composed-authority analysis across multiple tools and instruction surfaces
 4. interactive local HTML capability graph
 5. package/release hardening and a reusable GitHub Action
 

@@ -3,7 +3,7 @@ import { extname, join } from "node:path";
 
 const ignoredDirectories = new Set(["node_modules", ".git", "dist", "build", "coverage"]);
 const sourceExtensions = new Set([".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"]);
-const agentNames = new Set(["AGENTS.md", "CLAUDE.md", "SKILL.md"]);
+const agentNames = new Set(["AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "SKILL.md"]);
 const mcpNames = new Set([".mcp.json", "mcp.json"]);
 
 export interface DiscoveredProject {

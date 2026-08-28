@@ -54,6 +54,38 @@ export function renderDiffTerminal(diff: AuthorityDiff): string {
     }
   }
 
+  if (diff.addedInstructions.length) {
+    lines.push("", "Added agent instructions");
+    for (const instruction of diff.addedInstructions) {
+      lines.push(`+ ${instruction.kind}  ${instruction.file}  scope=${instruction.scope}`);
+      if (instruction.imports.length) {
+        lines.push(`  imports: ${instruction.imports.join(", ")}`);
+      }
+      if (instruction.skill?.allowedTools?.length) {
+        lines.push(`  allowed tools: ${instruction.skill.allowedTools.join(", ")}`);
+      }
+    }
+  }
+
+  if (diff.removedInstructions.length) {
+    lines.push("", "Removed agent instructions");
+    for (const instruction of diff.removedInstructions) {
+      lines.push(`- ${instruction.kind}  ${instruction.file}  scope=${instruction.scope}`);
+    }
+  }
+
+  if (diff.changedInstructions.length) {
+    lines.push("", "Changed agent instructions");
+    for (const instruction of diff.changedInstructions) {
+      lines.push(`~ ${instruction.kind}  ${instruction.file}`);
+      if (instruction.contentChanged) lines.push("  content changed");
+      for (const imported of instruction.addedImports) lines.push(`  + import ${imported}`);
+      for (const imported of instruction.removedImports) lines.push(`  - import ${imported}`);
+      for (const tool of instruction.addedAllowedTools) lines.push(`  + allowed tool ${tool}`);
+      for (const tool of instruction.removedAllowedTools) lines.push(`  - allowed tool ${tool}`);
+    }
+  }
+
   if (diff.addedFindings.length) {
     lines.push("", "New findings");
     for (const finding of diff.addedFindings) {
@@ -76,6 +108,9 @@ export function renderDiffTerminal(diff: AuthorityDiff): string {
     && diff.addedTools.length === 0
     && diff.removedTools.length === 0
     && diff.changedTools.length === 0
+    && diff.addedInstructions.length === 0
+    && diff.removedInstructions.length === 0
+    && diff.changedInstructions.length === 0
   ) {
     lines.push("", "No semantic authority changes detected.");
   }

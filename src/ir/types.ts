@@ -13,6 +13,7 @@ export type NodeKind =
   | "network"
   | "tool"
   | "skill"
+  | "agent-instruction"
   | "mcp-server"
   | "capability";
 
@@ -86,5 +87,27 @@ export interface McpTool {
   inputs: string[];
   annotations?: ToolAnnotations;
   capabilities: Capability[];
+  evidence: Evidence[];
+}
+
+export type AgentInstructionKind = "codex" | "claude" | "skill";
+
+export interface SkillMetadata {
+  name: string;
+  description: string;
+  license?: string;
+  compatibility?: string;
+  allowedTools?: string[];
+}
+
+export interface AgentInstruction {
+  id: string;
+  kind: AgentInstructionKind;
+  file: string;
+  scope: string;
+  contentHash: string;
+  precedence?: "normal" | "override";
+  imports: string[];
+  skill?: SkillMetadata;
   evidence: Evidence[];
 }

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -16,6 +16,20 @@ async function scanTemporaryProject(source: string) {
   const root = await mkdtemp(join(tmpdir(), "scopegraph-mcp-sdk-"));
   try {
     await writeFile(join(root, "server.ts"), source, "utf8");
+    return await scanProject(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function scanTemporaryFiles(files: Record<string, string>) {
+  const root = await mkdtemp(join(tmpdir(), "scopegraph-instructions-"));
+  try {
+    for (const [relativePath, source] of Object.entries(files)) {
+      const path = join(root, relativePath);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, source, "utf8");
+    }
     return await scanProject(root);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -81,6 +95,76 @@ test("scanProject attributes proven shell authority to an MCP tool even when ann
   assert.equal(report.findings.length, 1);
   assert.equal(report.findings[0]?.ruleId, "SG1001");
   assert.equal(report.findings[0]?.pathLabels[0], "run.command");
+});
+
+test("scanProject inventories Codex Claude and skill instructions without inventing authority", async () => {
+  const report = await scanTemporaryFiles({
+    "AGENTS.md": "# Root instructions\nRun whatever commands are needed.\n",
+    "packages/api/AGENTS.override.md": "# API override\n",
+    "packages/api/CLAUDE.md": "Read @README.md and `@ignored.md`.\n",
+    ".agents/skills/review/SKILL.md": `---
+name: review
+description: Review repository changes.
+allowed-tools: Read Grep
+---
+# Review
+`,
+    "skills/broken/SKILL.md": `---
+name: broken
+---
+# Missing description
+`,
+  });
+
+  assert.deepEqual(
+    report.agentInstructions.map((instruction) => ({
+      kind: instruction.kind,
+      file: instruction.file,
+      scope: instruction.scope,
+      precedence: instruction.precedence,
+      imports: instruction.imports,
+      skill: instruction.skill?.name,
+    })),
+    [
+      {
+        kind: "skill",
+        file: ".agents/skills/review/SKILL.md",
+        scope: ".agents/skills/review",
+        precedence: undefined,
+        imports: [],
+        skill: "review",
+      },
+      {
+        kind: "codex",
+        file: "AGENTS.md",
+        scope: ".",
+        precedence: "normal",
+        imports: [],
+        skill: undefined,
+      },
+      {
+        kind: "codex",
+        file: "packages/api/AGENTS.override.md",
+        scope: "packages/api",
+        precedence: "override",
+        imports: [],
+        skill: undefined,
+      },
+      {
+        kind: "claude",
+        file: "packages/api/CLAUDE.md",
+        scope: "packages/api",
+        precedence: undefined,
+        imports: ["README.md"],
+        skill: undefined,
+      },
+    ],
+  );
+  assert.equal(report.diagnostics.some((diagnostic) =>
+    diagnostic.confidence === "UNKNOWN" && diagnostic.message.includes("description")
+  ), true);
+  assert.deepEqual(report.capabilities, []);
+  assert.deepEqual(report.findings, []);
 });
 
 test("scan CLI emits SARIF when --sarif is requested", async () => {

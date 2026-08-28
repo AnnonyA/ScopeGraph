@@ -27,6 +27,33 @@ const afterTool = {
   capabilities: [shellCapability],
 };
 
+const beforeInstruction = {
+  id: "agents-before",
+  kind: "codex" as const,
+  file: "AGENTS.md",
+  scope: ".",
+  contentHash: "a".repeat(64),
+  precedence: "normal" as const,
+  imports: [],
+  evidence: [{ file: "AGENTS.md", startLine: 1 }],
+};
+
+const afterInstruction = {
+  ...beforeInstruction,
+  id: "agents-after",
+  contentHash: "b".repeat(64),
+};
+
+const addedClaude = {
+  id: "claude-added",
+  kind: "claude" as const,
+  file: "packages/api/CLAUDE.md",
+  scope: "packages/api",
+  contentHash: "c".repeat(64),
+  imports: ["README.md"],
+  evidence: [{ file: "packages/api/CLAUDE.md", startLine: 1 }],
+};
+
 const diff: AuthorityDiff = {
   beforeRoot: "base-sha",
   afterRoot: "head-sha",
@@ -67,6 +94,21 @@ const diff: AuthorityDiff = {
       removedInputs: [],
     },
   ],
+  addedInstructions: [addedClaude],
+  removedInstructions: [],
+  changedInstructions: [
+    {
+      kind: "codex",
+      file: "AGENTS.md",
+      before: beforeInstruction,
+      after: afterInstruction,
+      contentChanged: true,
+      addedImports: [],
+      removedImports: [],
+      addedAllowedTools: [],
+      removedAllowedTools: [],
+    },
+  ],
 };
 
 test("renderDiffMarkdown creates a GitHub-friendly authority summary", () => {
@@ -79,6 +121,11 @@ test("renderDiffMarkdown creates a GitHub-friendly authority summary", () => {
   assert.match(markdown, /### Changed MCP tools/);
   assert.match(markdown, /#### `run`/);
   assert.match(markdown, /\+ `shell\.execute`/);
+  assert.match(markdown, /### Added agent instructions/);
+  assert.match(markdown, /`packages\/api\/CLAUDE\.md`/);
+  assert.match(markdown, /### Changed agent instructions/);
+  assert.match(markdown, /`AGENTS\.md`/);
+  assert.match(markdown, /content changed/);
   assert.match(markdown, /### New findings/);
   assert.match(markdown, /CRITICAL `SG1001`/);
   assert.match(markdown, /src\/server\.ts:12/);
@@ -96,6 +143,9 @@ test("renderDiffMarkdown reports a clean semantic diff without pretending nothin
     addedTools: [],
     removedTools: [],
     changedTools: [],
+    addedInstructions: [],
+    removedInstructions: [],
+    changedInstructions: [],
   });
 
   assert.match(markdown, /No semantic authority changes detected\./);
