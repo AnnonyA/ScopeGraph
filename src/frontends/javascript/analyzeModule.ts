@@ -3,12 +3,21 @@ import { AgentGraph } from "../../ir/graph.ts";
 import { createNodeId } from "../../ir/ids.ts";
 import type { Capability, Diagnostic, Evidence } from "../../ir/types.ts";
 import type { DiscoveredMcpTool } from "../mcp-sdk/discoverTools.ts";
-import { executionCapability, isChildProcessModule, processExecutionApis } from "./knownApis.ts";
+import {
+  executionCapability,
+  filesystemWriteApis,
+  isChildProcessModule,
+  isFileSystemModule,
+  processExecutionApis,
+} from "./knownApis.ts";
 
 export interface ModuleAnalysis {
   graph: AgentGraph;
   sources: Set<string>;
+  sensitiveSources: Set<string>;
   sinks: Set<string>;
+  fileWriteSinks: Set<string>;
+  networkSinks: Set<string>;
   capabilities: Capability[];
   diagnostics: Diagnostic[];
 }
@@ -26,12 +35,17 @@ export function analyzeModuleSource(
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, scriptKind);
   const graph = new AgentGraph();
   const sources = new Set<string>();
+  const sensitiveSources = new Set<string>();
   const sinks = new Set<string>();
+  const fileWriteSinks = new Set<string>();
+  const networkSinks = new Set<string>();
   const diagnostics: Diagnostic[] = [];
   const capabilities: Capability[] = [];
   const capabilityKeys = new Set<string>();
   const executionNames = new Map<string, string>();
   const childProcessNamespaces = new Set<string>();
+  const fileWriteNames = new Map<string, string>();
+  const fileSystemNamespaces = new Set<string>();
   const taintedNames = new Map<string, string>();
   const taintedProperties = new Map<string, string>();
   const taintToolNames = new Map<string, string>();
@@ -64,19 +78,69 @@ export function analyzeModuleSource(
 
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    if (!isChildProcessModule(statement.moduleSpecifier.text)) continue;
+    const moduleName = statement.moduleSpecifier.text;
     const bindings = statement.importClause?.namedBindings;
-    if (bindings && ts.isNamedImports(bindings)) {
-      for (const element of bindings.elements) {
-        const imported = element.propertyName?.text ?? element.name.text;
-        if (processExecutionApis.has(imported)) executionNames.set(element.name.text, imported);
+
+    if (isChildProcessModule(moduleName)) {
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const imported = element.propertyName?.text ?? element.name.text;
+          if (processExecutionApis.has(imported)) executionNames.set(element.name.text, imported);
+        }
+      } else if (bindings && ts.isNamespaceImport(bindings)) {
+        childProcessNamespaces.add(bindings.name.text);
       }
-    } else if (bindings && ts.isNamespaceImport(bindings)) {
-      childProcessNamespaces.add(bindings.name.text);
+    }
+
+    if (isFileSystemModule(moduleName)) {
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          const imported = element.propertyName?.text ?? element.name.text;
+          if (filesystemWriteApis.has(imported)) fileWriteNames.set(element.name.text, imported);
+        }
+      } else if (bindings && ts.isNamespaceImport(bindings)) {
+        fileSystemNamespaces.add(bindings.name.text);
+      }
     }
   }
 
+  const isProcessEnv = (expression: ts.Expression): boolean => (
+    ts.isPropertyAccessExpression(expression)
+    && ts.isIdentifier(expression.expression)
+    && expression.expression.text === "process"
+    && expression.name.text === "env"
+  );
+
+  const environmentKeyForExpression = (expression: ts.Expression): string | undefined => {
+    if (ts.isPropertyAccessExpression(expression) && isProcessEnv(expression.expression)) {
+      return expression.name.text;
+    }
+    if (
+      ts.isElementAccessExpression(expression)
+      && isProcessEnv(expression.expression)
+      && expression.argumentExpression
+      && (ts.isStringLiteral(expression.argumentExpression)
+        || ts.isNoSubstitutionTemplateLiteral(expression.argumentExpression))
+    ) {
+      return expression.argumentExpression.text;
+    }
+    return undefined;
+  };
+
+  const environmentSourceForExpression = (expression: ts.Expression): string | undefined => {
+    const key = environmentKeyForExpression(expression);
+    if (!key) return undefined;
+    const label = `process.env.${key}`;
+    const id = createNodeId("environment", filePath, label);
+    graph.addNode({ id, kind: "environment", label, evidence: [evidence(expression, label)] });
+    sensitiveSources.add(id);
+    return id;
+  };
+
   const taintForExpression = (expression: ts.Expression): string | undefined => {
+    const environmentSource = environmentSourceForExpression(expression);
+    if (environmentSource) return environmentSource;
+
     if (ts.isIdentifier(expression)) return taintedNames.get(expression.text);
     if (ts.isPropertyAccessExpression(expression)) {
       if (ts.isIdentifier(expression.expression)) {
@@ -108,6 +172,29 @@ export function analyzeModuleSource(
         if (taint) return taint;
       }
     }
+    if (ts.isObjectLiteralExpression(expression)) {
+      for (const property of expression.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          const taint = taintForExpression(property.initializer);
+          if (taint) return taint;
+        }
+        if (ts.isShorthandPropertyAssignment(property)) {
+          const taint = taintedNames.get(property.name.text);
+          if (taint) return taint;
+        }
+        if (ts.isSpreadAssignment(property)) {
+          const taint = taintForExpression(property.expression);
+          if (taint) return taint;
+        }
+      }
+    }
+    if (ts.isArrayLiteralExpression(expression)) {
+      for (const element of expression.elements) {
+        if (!ts.isExpression(element)) continue;
+        const taint = taintForExpression(element);
+        if (taint) return taint;
+      }
+    }
     return undefined;
   };
 
@@ -117,6 +204,19 @@ export function analyzeModuleSource(
       if (
         childProcessNamespaces.has(expression.expression.text)
         && processExecutionApis.has(expression.name.text)
+      ) {
+        return expression.name.text;
+      }
+    }
+    return undefined;
+  };
+
+  const filesystemWriteApiName = (expression: ts.Expression): string | undefined => {
+    if (ts.isIdentifier(expression)) return fileWriteNames.get(expression.text);
+    if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
+      if (
+        fileSystemNamespaces.has(expression.expression.text)
+        && filesystemWriteApis.has(expression.name.text)
       ) {
         return expression.name.text;
       }
@@ -238,15 +338,38 @@ export function analyzeModuleSource(
           }
         }
       } else {
-        const dynamic =
-          (ts.isIdentifier(node.expression) && dynamicCallNames.has(node.expression.text))
-          || ts.isElementAccessExpression(node.expression);
-        if (dynamic) {
-          diagnostics.push({
-            confidence: "UNKNOWN",
-            message: "Computed call target cannot be resolved statically",
-            evidence: [evidence(node)],
-          });
+        const fileApiName = filesystemWriteApiName(node.expression);
+        if (fileApiName) {
+          const label = node.expression.getText(sourceFile);
+          const sink = createNodeId("file", filePath, `${label}@${node.pos}`);
+          graph.addNode({ id: sink, kind: "file", label, evidence: [evidence(node, label)] });
+          fileWriteSinks.add(sink);
+          for (const argument of node.arguments.slice(0, 2)) {
+            const incoming = taintForExpression(argument);
+            if (!incoming) continue;
+            graph.addEdge({ from: incoming, to: sink, kind: "writes", evidence: [evidence(node, label)] });
+          }
+        } else if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
+          const label = "fetch";
+          const sink = createNodeId("network", filePath, `${label}@${node.pos}`);
+          graph.addNode({ id: sink, kind: "network", label, evidence: [evidence(node, label)] });
+          networkSinks.add(sink);
+          for (const argument of node.arguments) {
+            const incoming = taintForExpression(argument);
+            if (!incoming) continue;
+            graph.addEdge({ from: incoming, to: sink, kind: "sends-to", evidence: [evidence(node, label)] });
+          }
+        } else {
+          const dynamic =
+            (ts.isIdentifier(node.expression) && dynamicCallNames.has(node.expression.text))
+            || ts.isElementAccessExpression(node.expression);
+          if (dynamic) {
+            diagnostics.push({
+              confidence: "UNKNOWN",
+              message: "Computed call target cannot be resolved statically",
+              evidence: [evidence(node)],
+            });
+          }
         }
       }
     }
@@ -256,5 +379,14 @@ export function analyzeModuleSource(
 
   visit(sourceFile);
   capabilities.sort((a, b) => `${a.source}:${a.kind}:${a.target}`.localeCompare(`${b.source}:${b.kind}:${b.target}`));
-  return { graph, sources, sinks, capabilities, diagnostics };
+  return {
+    graph,
+    sources,
+    sensitiveSources,
+    sinks,
+    fileWriteSinks,
+    networkSinks,
+    capabilities,
+    diagnostics,
+  };
 }
