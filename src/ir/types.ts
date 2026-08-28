@@ -13,6 +13,7 @@ export type NodeKind =
   | "network"
   | "tool"
   | "skill"
+  | "agent-instruction"
   | "mcp-server"
   | "capability";
 
