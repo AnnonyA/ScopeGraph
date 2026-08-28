@@ -7,8 +7,22 @@ export const processExecutionApis = new Set([
   "spawnSync",
 ]);
 
+export const filesystemWriteApis = new Set([
+  "writeFile",
+  "writeFileSync",
+  "appendFile",
+  "appendFileSync",
+]);
+
 export function isChildProcessModule(name: string): boolean {
   return name === "node:child_process" || name === "child_process";
+}
+
+export function isFileSystemModule(name: string): boolean {
+  return name === "node:fs"
+    || name === "fs"
+    || name === "node:fs/promises"
+    || name === "fs/promises";
 }
 
 export function executionCapability(apiName: string): CapabilityKind | undefined {

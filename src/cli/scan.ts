@@ -52,7 +52,10 @@ export async function scanProject(root: string): Promise<ScanReport> {
   const project = await discoverProject(resolve(root));
   const graph = new AgentGraph();
   const sources = new Set<string>();
+  const sensitiveSources = new Set<string>();
   const sinks = new Set<string>();
+  const fileWriteSinks = new Set<string>();
+  const networkSinks = new Set<string>();
   const diagnostics: Diagnostic[] = [];
   const capabilities: Capability[] = [];
   const mcpTools: McpTool[] = [];
@@ -66,7 +69,10 @@ export async function scanProject(root: string): Promise<ScanReport> {
     const analysis = analyzeModuleSource(relativeFile, source, { mcpTools: discovery.tools });
     graph.merge(analysis.graph);
     for (const id of analysis.sources) sources.add(id);
+    for (const id of analysis.sensitiveSources) sensitiveSources.add(id);
     for (const id of analysis.sinks) sinks.add(id);
+    for (const id of analysis.fileWriteSinks) fileWriteSinks.add(id);
+    for (const id of analysis.networkSinks) networkSinks.add(id);
     capabilities.push(...analysis.capabilities);
     diagnostics.push(...discovery.diagnostics, ...analysis.diagnostics);
 
@@ -107,6 +113,9 @@ export async function scanProject(root: string): Promise<ScanReport> {
   mcpTools.sort(toolOrder);
   agentInstructions.sort(instructionOrder);
 
+  const findingSources = new Set([...sources, ...sensitiveSources]);
+  const findingSinks = new Set([...sinks, ...fileWriteSinks, ...networkSinks]);
+
   return {
     root: project.root,
     filesAnalyzed: project.sourceFiles.length,
@@ -114,7 +123,7 @@ export async function scanProject(root: string): Promise<ScanReport> {
     mcpTools,
     agentInstructions,
     capabilities,
-    findings: detectFindings(graph, sources, sinks),
+    findings: detectFindings(graph, findingSources, findingSinks),
     diagnostics,
   };
 }

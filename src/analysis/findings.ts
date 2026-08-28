@@ -1,5 +1,5 @@
 import type { AgentGraph } from "../ir/graph.ts";
-import type { Evidence } from "../ir/types.ts";
+import type { Evidence, NodeKind } from "../ir/types.ts";
 import { findPaths, type ReachabilityPath } from "./taint.ts";
 
 export interface Finding {
@@ -11,6 +11,12 @@ export interface Finding {
   pathLabels: string[];
   path: ReachabilityPath;
   evidence: Evidence[];
+}
+
+interface FindingRule {
+  ruleId: string;
+  title: string;
+  severity: Finding["severity"];
 }
 
 function pathEvidence(graph: AgentGraph, path: ReachabilityPath): Evidence[] {
@@ -31,23 +37,61 @@ function semanticPathLabels(graph: AgentGraph, path: ReachabilityPath): string[]
   return path.nodes.map((id) => graph.getNode(id)?.label ?? "<unknown>");
 }
 
+function findingRule(sourceKind: NodeKind | undefined, sinkKind: NodeKind | undefined): FindingRule | undefined {
+  const untrusted = sourceKind === "user-input" || sourceKind === "mcp-tool-input";
+
+  if (untrusted && sinkKind === "process") {
+    return {
+      ruleId: "SG1001",
+      title: "Untrusted content reaches shell execution",
+      severity: "critical",
+    };
+  }
+
+  if (untrusted && sinkKind === "file") {
+    return {
+      ruleId: "SG1101",
+      title: "Untrusted content reaches filesystem mutation",
+      severity: "high",
+    };
+  }
+
+  if (sourceKind === "environment" && sinkKind === "network") {
+    return {
+      ruleId: "SG1201",
+      title: "Sensitive environment data reaches network",
+      severity: "high",
+    };
+  }
+
+  return undefined;
+}
+
 export function detectFindings(
   graph: AgentGraph,
   sources: ReadonlySet<string>,
   sinks: ReadonlySet<string>,
 ): Finding[] {
-  return findPaths(graph, sources, sinks).map((path) => {
-    const ruleId = "SG1001";
+  const findings: Finding[] = [];
+
+  for (const path of findPaths(graph, sources, sinks)) {
+    const sourceKind = graph.getNode(path.nodes[0] ?? "")?.kind;
+    const sinkKind = graph.getNode(path.nodes.at(-1) ?? "")?.kind;
+    const rule = findingRule(sourceKind, sinkKind);
+    if (!rule) continue;
+
     const pathLabels = semanticPathLabels(graph, path);
-    return {
-      ruleId,
-      title: "Untrusted content reaches shell execution",
-      severity: "critical" as const,
-      confidence: "PROVEN" as const,
-      signature: `${ruleId}\0${pathLabels.join(">")}`,
+    findings.push({
+      ruleId: rule.ruleId,
+      title: rule.title,
+      severity: rule.severity,
+      confidence: "PROVEN",
+      signature: `${rule.ruleId}\0${pathLabels.join(">")}`,
       pathLabels,
       path,
       evidence: pathEvidence(graph, path),
-    };
-  });
+    });
+  }
+
+  return findings;
 }
