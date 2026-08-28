@@ -1,6 +1,6 @@
 import type { Finding } from "./findings.ts";
 import type { ScanReport } from "../cli/scan.ts";
-import type { Capability, McpTool } from "../ir/types.ts";
+import type { AgentInstruction, Capability, McpTool } from "../ir/types.ts";
 
 export interface ChangedTool {
   name: string;
@@ -13,6 +13,18 @@ export interface ChangedTool {
   removedInputs: string[];
 }
 
+export interface ChangedInstruction {
+  kind: AgentInstruction["kind"];
+  file: string;
+  before: AgentInstruction;
+  after: AgentInstruction;
+  contentChanged: boolean;
+  addedImports: string[];
+  removedImports: string[];
+  addedAllowedTools: string[];
+  removedAllowedTools: string[];
+}
+
 export interface AuthorityDiff {
   beforeRoot: string;
   afterRoot: string;
@@ -23,6 +35,9 @@ export interface AuthorityDiff {
   addedTools: McpTool[];
   removedTools: McpTool[];
   changedTools: ChangedTool[];
+  addedInstructions: AgentInstruction[];
+  removedInstructions: AgentInstruction[];
+  changedInstructions: ChangedInstruction[];
 }
 
 function capabilityKey(capability: Capability): string {
@@ -53,6 +68,29 @@ function toolStateKey(tool: McpTool): string {
     [...tool.inputs].sort().join("\0"),
     annotationsKey(tool),
     tool.capabilities.map(capabilityKey).sort().join("\0"),
+  ].join("\u0001");
+}
+
+function instructionKey(instruction: AgentInstruction): string {
+  return `${instruction.kind}\0${instruction.file}`;
+}
+
+function allowedTools(instruction: AgentInstruction): string[] {
+  return [...(instruction.skill?.allowedTools ?? [])].sort();
+}
+
+function instructionStateKey(instruction: AgentInstruction): string {
+  const skill = instruction.skill;
+  return [
+    instruction.contentHash,
+    instruction.scope,
+    instruction.precedence ?? "",
+    [...instruction.imports].sort().join("\0"),
+    skill?.name ?? "",
+    skill?.description ?? "",
+    skill?.license ?? "",
+    skill?.compatibility ?? "",
+    allowedTools(instruction).join("\0"),
   ].join("\u0001");
 }
 
@@ -135,10 +173,61 @@ function toolDelta(before: readonly McpTool[], after: readonly McpTool[]): {
   return { added, removed, changed };
 }
 
+function instructionDelta(
+  before: readonly AgentInstruction[],
+  after: readonly AgentInstruction[],
+): {
+  added: AgentInstruction[];
+  removed: AgentInstruction[];
+  changed: ChangedInstruction[];
+} {
+  const beforeByKey = new Map(before.map((instruction) => [instructionKey(instruction), instruction]));
+  const afterByKey = new Map(after.map((instruction) => [instructionKey(instruction), instruction]));
+
+  const added = [...afterByKey]
+    .filter(([key]) => !beforeByKey.has(key))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, instruction]) => instruction);
+  const removed = [...beforeByKey]
+    .filter(([key]) => !afterByKey.has(key))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, instruction]) => instruction);
+
+  const changed = [...afterByKey]
+    .filter(([key, instruction]) => {
+      const previous = beforeByKey.get(key);
+      return previous !== undefined
+        && instructionStateKey(previous) !== instructionStateKey(instruction);
+    })
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, instruction]) => {
+      const previous = beforeByKey.get(key)!;
+      const imports = stringDelta(previous.imports, instruction.imports);
+      const tools = stringDelta(allowedTools(previous), allowedTools(instruction));
+      return {
+        kind: instruction.kind,
+        file: instruction.file,
+        before: previous,
+        after: instruction,
+        contentChanged: previous.contentHash !== instruction.contentHash,
+        addedImports: imports.added,
+        removedImports: imports.removed,
+        addedAllowedTools: tools.added,
+        removedAllowedTools: tools.removed,
+      };
+    });
+
+  return { added, removed, changed };
+}
+
 export function diffReports(before: ScanReport, after: ScanReport): AuthorityDiff {
   const capabilities = semanticDelta(before.capabilities, after.capabilities, capabilityKey);
   const findings = semanticDelta(before.findings, after.findings, findingKey);
   const tools = toolDelta(before.mcpTools ?? [], after.mcpTools ?? []);
+  const instructions = instructionDelta(
+    before.agentInstructions ?? [],
+    after.agentInstructions ?? [],
+  );
 
   return {
     beforeRoot: before.root,
@@ -150,5 +239,8 @@ export function diffReports(before: ScanReport, after: ScanReport): AuthorityDif
     addedTools: tools.added,
     removedTools: tools.removed,
     changedTools: tools.changed,
+    addedInstructions: instructions.added,
+    removedInstructions: instructions.removed,
+    changedInstructions: instructions.changed,
   };
 }
