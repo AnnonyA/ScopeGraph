@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { parseDocument } from "yaml";
 import { createNodeId } from "../../ir/ids.ts";
@@ -24,6 +25,10 @@ function scopeFor(filePath: string): string {
 
 function evidenceFor(filePath: string): Evidence[] {
   return [{ file: normalizedPath(filePath), startLine: 1 }];
+}
+
+function contentHash(source: string): string {
+  return createHash("sha256").update(source, "utf8").digest("hex");
 }
 
 function stripMarkdownCode(source: string): string {
@@ -164,6 +169,7 @@ function analyzeSkill(filePath: string, source: string): InstructionAnalysis {
       kind: "skill",
       file,
       scope: scopeFor(file),
+      contentHash: contentHash(source),
       imports: [],
       skill,
       evidence,
@@ -177,6 +183,7 @@ export function analyzeInstructionFile(filePath: string, source: string): Instru
   const name = posix.basename(file);
   const scope = scopeFor(file);
   const evidence = evidenceFor(file);
+  const hash = contentHash(source);
 
   if (name === "AGENTS.md" || name === "AGENTS.override.md") {
     return {
@@ -185,6 +192,7 @@ export function analyzeInstructionFile(filePath: string, source: string): Instru
         kind: "codex",
         file,
         scope,
+        contentHash: hash,
         precedence: name === "AGENTS.override.md" ? "override" : "normal",
         imports: [],
         evidence,
@@ -200,6 +208,7 @@ export function analyzeInstructionFile(filePath: string, source: string): Instru
         kind: "claude",
         file,
         scope,
+        contentHash: hash,
         imports: claudeImports(source),
         evidence,
       }],
