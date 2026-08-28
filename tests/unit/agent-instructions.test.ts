@@ -17,6 +17,16 @@ test("Codex instruction files preserve directory scope and override precedence",
   assert.equal(nested.instructions[0]?.precedence, "override");
 });
 
+test("instruction content hashes are deterministic and change with the body", () => {
+  const first = analyzeInstructionFile("AGENTS.md", "# Root instructions\n");
+  const same = analyzeInstructionFile("AGENTS.md", "# Root instructions\n");
+  const changed = analyzeInstructionFile("AGENTS.md", "# Different instructions\n");
+
+  assert.match(first.instructions[0]?.contentHash ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(first.instructions[0]?.contentHash, same.instructions[0]?.contentHash);
+  assert.notEqual(first.instructions[0]?.contentHash, changed.instructions[0]?.contentHash);
+});
+
 test("Claude instruction files extract literal imports outside Markdown code", () => {
   const result = analyzeInstructionFile("packages/app/CLAUDE.md", `
 Read @README.md and @docs/rules.md before editing.
