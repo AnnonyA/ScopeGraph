@@ -25,16 +25,44 @@ const mcpTool = (id: string, name: string, capabilities: ReturnType<typeof capab
   evidence: [],
 });
 
+const instruction = (
+  kind: "codex" | "claude" | "skill",
+  file: string,
+  contentHash: string,
+  options: {
+    imports?: string[];
+    allowedTools?: string[];
+  } = {},
+) => ({
+  id: `${kind}:${file}:${contentHash}`,
+  kind,
+  file,
+  scope: file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".",
+  contentHash,
+  ...(kind === "codex" ? { precedence: "normal" as const } : {}),
+  imports: options.imports ?? [],
+  ...(kind === "skill" ? {
+    skill: {
+      name: "review",
+      description: "Review repository changes.",
+      ...(options.allowedTools ? { allowedTools: options.allowedTools } : {}),
+    },
+  } : {}),
+  evidence: [],
+});
+
 const report = (
   root: string,
   capabilities: ReturnType<typeof capability>[],
   findings: any[] = [],
   mcpTools: ReturnType<typeof mcpTool>[] = [],
+  agentInstructions: ReturnType<typeof instruction>[] = [],
 ) => ({
   root,
   filesAnalyzed: 0,
   mcpServers: 0,
   mcpTools,
+  agentInstructions,
   capabilities,
   findings,
   diagnostics: [],
@@ -120,4 +148,50 @@ test("diffReports reports newly exposed MCP tools without classifying them as ch
   assert.deepEqual(diff.addedTools.map(({ name }) => name), ["status"]);
   assert.deepEqual(diff.removedTools, []);
   assert.deepEqual(diff.changedTools, []);
+});
+
+test("diffReports distinguishes added and changed agent instructions semantically", () => {
+  const before = report("before", [], [], [], [
+    instruction("codex", "AGENTS.md", "a".repeat(64)),
+    instruction("skill", ".agents/skills/review/SKILL.md", "b".repeat(64), {
+      allowedTools: ["Read"],
+    }),
+  ]);
+  const after = report("after", [], [], [], [
+    instruction("codex", "AGENTS.md", "c".repeat(64)),
+    instruction("skill", ".agents/skills/review/SKILL.md", "d".repeat(64), {
+      allowedTools: ["Read", "Grep"],
+    }),
+    instruction("claude", "packages/api/CLAUDE.md", "e".repeat(64), {
+      imports: ["README.md"],
+    }),
+  ]);
+
+  const diff = diffReports(before, after);
+  assert.deepEqual(diff.addedInstructions.map(({ file }) => file), ["packages/api/CLAUDE.md"]);
+  assert.deepEqual(diff.removedInstructions, []);
+  assert.deepEqual(diff.changedInstructions.map(({ file }) => file), [
+    ".agents/skills/review/SKILL.md",
+    "AGENTS.md",
+  ]);
+  assert.equal(diff.changedInstructions.find(({ file }) => file === "AGENTS.md")?.contentChanged, true);
+  assert.deepEqual(
+    diff.changedInstructions.find(({ file }) => file.endsWith("SKILL.md"))?.addedAllowedTools,
+    ["Grep"],
+  );
+});
+
+test("diffReports ignores root-dependent instruction ids when semantic state is unchanged", () => {
+  const beforeInstruction = instruction("claude", "CLAUDE.md", "f".repeat(64), {
+    imports: ["README.md"],
+  });
+  const afterInstruction = { ...beforeInstruction, id: "different-id" };
+
+  const diff = diffReports(
+    report("/tmp/before", [], [], [], [beforeInstruction]),
+    report("/tmp/after", [], [], [], [afterInstruction]),
+  );
+  assert.deepEqual(diff.addedInstructions, []);
+  assert.deepEqual(diff.removedInstructions, []);
+  assert.deepEqual(diff.changedInstructions, []);
 });
