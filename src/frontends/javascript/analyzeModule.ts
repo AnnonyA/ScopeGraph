@@ -296,6 +296,11 @@ export function analyzeModuleSource(
     }
   };
 
+  const isExportedFunctionDeclaration = (node: ts.Node): node is ts.FunctionDeclaration => (
+    ts.isFunctionDeclaration(node)
+    && node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true
+  );
+
   const visit = (node: ts.Node, activeMcpTool?: DiscoveredMcpTool): void => {
     let currentTool = activeMcpTool;
 
@@ -311,13 +316,15 @@ export function analyzeModuleSource(
         seedMcpToolInputs(node, mcpTool);
       } else {
         currentTool = undefined;
-        for (const parameter of node.parameters) {
-          if (!ts.isIdentifier(parameter.name)) continue;
-          const name = parameter.name.text;
-          const id = createNodeId("user-input", filePath, `${name}@${parameter.pos}`);
-          graph.addNode({ id, kind: "user-input", label: name, evidence: [evidence(parameter, name)] });
-          sources.add(id);
-          taintedNames.set(name, id);
+        if (isExportedFunctionDeclaration(node)) {
+          for (const parameter of node.parameters) {
+            if (!ts.isIdentifier(parameter.name)) continue;
+            const name = parameter.name.text;
+            const id = createNodeId("user-input", filePath, `${name}@${parameter.pos}`);
+            graph.addNode({ id, kind: "user-input", label: name, evidence: [evidence(parameter, name)] });
+            sources.add(id);
+            taintedNames.set(name, id);
+          }
         }
       }
     }
