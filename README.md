@@ -14,28 +14,27 @@ It can also compare two project states and answer a more useful question than �
 
 > **What new authority did this change give the agent?**
 
-The current core analyzes JavaScript/TypeScript execution flows and common MCP JSON configuration. It can prove when untrusted function input reaches Node.js process-execution APIs, inventory MCP runtime authority, compare authority between project states or Git revisions, preserve evidence, and stay conservative when behavior cannot be resolved.
+The current core analyzes JavaScript/TypeScript execution flows, common MCP JSON configuration, and common MCP SDK tool-registration patterns. It can discover MCP tools and their inputs, link proven process authority back to the tool that exposes it, prove when untrusted tool input reaches Node.js execution APIs, compare tool-level authority between project states or Git revisions, preserve evidence, and stay conservative when behavior cannot be resolved.
 
 ```text
                  project
                     │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-      JS / TS              MCP config
-          │                   │
-          ▼              ┌────┼─────────────┐
-   taint / calls          ▼    ▼             ▼
-          │             process network  environment
-          └──────────┬────┘
-                     ▼
-             Agent IR + evidence
-                     │
-                     ▼
-          authority / reachability
-                     │
-              ┌──────┴──────┐
-              ▼             ▼
-            scan           diff
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+     JS / TS     MCP config   MCP SDK tools
+        │           │           │
+        │      runtime auth   tool inputs
+        │           │           │
+        └───────────┴─────┬─────┘
+                          ▼
+                 Agent IR + evidence
+                          │
+                          ▼
+               authority / reachability
+                          │
+                   ┌──────┴──────┐
+                   ▼             ▼
+                 scan           diff
 ```
 
 ## Why ScopeGraph
@@ -59,6 +58,8 @@ Implemented today:
 - TypeScript Compiler API frontend
 - `node:child_process` and `child_process` modeling
 - `exec`, `execSync`, `spawn`, and `spawnSync` sinks
+- `exec` / `execSync` modeled as `shell.execute`
+- `spawn` / `spawnSync` modeled as `process.spawn`
 - simple imported-function aliases such as `const run = exec`
 - basic taint propagation through identifiers, properties, assignments, binary expressions, and templates
 - `UNKNOWN` diagnostics for unresolved computed call targets
@@ -69,13 +70,26 @@ Implemented today:
 - MCP remote `network.connect` capability extraction
 - explicit MCP environment-key exposure inventory
 - credential-safe reporting: environment values, command args, URL paths, query strings, and fragments are not retained in capability output
+- MCP SDK v2 `registerTool(...)` discovery from `@modelcontextprotocol/server`
+- legacy MCP SDK v1 `.tool(...)` discovery
+- simple `McpServer` receiver alias tracking with stable server identity
+- static MCP tool-name and handler resolution
+- MCP tool-input discovery from common handler parameter patterns
+- tool annotations retained as metadata without overriding proven code authority
+- partial MCP analysis with `UNKNOWN` diagnostics for dynamic registration config or incomplete syntax
+- proven MCP tool input → `exec` paths attributed back to the exposed tool
+- per-tool capability inventory in scan reports
+- terminal and JSON output for discovered MCP tools, inputs, and capabilities
 - semantic authority diff between two project directories
 - Git revision authority diff using `base..head`
 - detached temporary worktrees with guaranteed cleanup for Git revision analysis
 - project-relative evidence paths so temporary or machine-specific roots do not leak into reports
 - root-independent capability comparison using `kind / source / target`
 - stable finding signatures so equivalent findings do not appear new just because a project moved
+- semantic MCP tool diff with `added`, `removed`, and `changed` tools
+- capability/input deltas for tools whose semantic identity remains stable
 - terminal, JSON, GitHub-friendly Markdown, and SARIF 2.1.0 output
+- MCP tool deltas in terminal and pull-request Markdown summaries
 - `scan --sarif` for full finding export
 - `diff --sarif` for newly introduced findings only
 - deduplicated SARIF rule descriptors with evidence-backed source locations
@@ -86,7 +100,7 @@ Implemented today:
 - Code Scanning SARIF upload for trusted same-repository pull requests
 - controlled positive, negative, unresolved, Git, reporter, and CLI integration fixtures
 
-ScopeGraph does **not** claim full MCP tool-level semantics, Claude Code, Codex, or `SKILL.md` coverage yet. Those layers are built incrementally on the same IR.
+ScopeGraph does **not** claim exhaustive MCP semantics or arbitrary JavaScript metaprogramming support. Dynamic names, unresolved handlers, and unsupported registration shapes remain conservative `UNKNOWN` territory. Claude Code, Codex, and `SKILL.md` frontends are not implemented yet.
 
 ## Quick start
 
@@ -130,11 +144,47 @@ node dist/cli/scan.js diff main..feature --sarif
 
 `scan --sarif` exports all findings proved by that scan. `diff --sarif` exports only findings introduced by the candidate state, so pre-existing findings are not re-announced as new pull-request issues.
 
+## MCP tool analysis
+
+ScopeGraph recognizes common MCP SDK server registrations statically. For example:
+
+```ts
+import { exec } from "node:child_process";
+import { McpServer } from "@modelcontextprotocol/server";
+
+const server = new McpServer({ name: "workspace", version: "1.0.0" });
+
+server.registerTool(
+  "run",
+  { inputSchema: {} },
+  async ({ command }) => {
+    exec(command);
+  },
+);
+```
+
+The tool input is treated as an untrusted source, the execution API is modeled as a sink, and the resulting authority is attached to the tool:
+
+```text
+MCP tools: 1
+
+MCP tools
+run [v2]
+  Inputs: command
+  Capabilities: shell.execute
+
+CRITICAL SG1001
+Untrusted content reaches shell execution
+Confidence: PROVEN
+```
+
+Annotations such as `readOnlyHint` are retained as metadata, but they do not suppress authority proved from the implementation. If ScopeGraph can prove the tool and handler while only the registration config is dynamic, it keeps the proven portion and emits an `UNKNOWN` diagnostic for the unresolved metadata/schema portion.
+
 ## Authority diff
 
 **Detect authority changes, not just line changes.**
 
-Given a baseline that can only launch a local MCP server and a candidate that adds a remote MCP endpoint plus a newly reachable shell path:
+Given a baseline tool with no process authority and a candidate where the same tool gains shell execution:
 
 ```text
 $ scopegraph diff main..feature
@@ -144,14 +194,18 @@ ScopeGraph Authority Diff
 Before: main
 After:  feature
 
+Changed MCP tools
+~ workspace:run
+  + capability shell.execute
+
 Added authority
-+ network.connect  docs -> https://mcp.example.com
++ shell.execute  mcp-tool:run -> child_process.exec
 
 New findings
 + CRITICAL SG1001  Untrusted content reaches shell execution
 ```
 
-Comparison is semantic. Two equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority.
+Comparison is semantic. Two equivalent capabilities with different graph IDs, project roots, or temporary Git worktree paths are treated as the same authority. Existing tools that gain or lose inputs/capabilities are reported as changed rather than as unrelated remove/add noise.
 
 For Git ranges, ScopeGraph resolves both revisions to commits, materializes detached temporary worktrees, analyzes them statically, normalizes evidence back to project-relative paths, and removes the worktrees afterward. The current checkout is not switched or modified by the comparison.
 
@@ -176,8 +230,9 @@ A Job Summary can look like this:
 ```markdown
 ## ScopeGraph Authority Diff
 
-### Added authority
-- `network.connect` — docs → `https://mcp.example.com` — `.mcp.json`
+### Changed MCP tools
+- `workspace:run`
+  - added capability: `shell.execute`
 
 ### New findings
 - CRITICAL `SG1001` — Untrusted content reaches shell execution — `src/tool.ts:3`
@@ -204,14 +259,18 @@ This repository-native integration is intentionally narrower than a reusable pub
 ScopeGraph
 
 Analyzed: 1 JavaScript / TypeScript file
-MCP servers: 2
-Capabilities: 3
+MCP servers: 1
+MCP tools: 1
+Capabilities: 1
 Findings: 1
 
+MCP tools
+run [v2]
+  Inputs: command
+  Capabilities: shell.execute
+
 Authority
-network.connect  docs -> https://mcp.example.com
-environment.expose  workspace -> GITHUB_TOKEN
-process.spawn  workspace -> node
+shell.execute  mcp-tool:run -> child_process.exec
 
 CRITICAL SG1001
 Untrusted content reaches shell execution
@@ -267,7 +326,9 @@ source tree / Git revisions
           │
           ├──────────────► JS / TS frontend
           │
-          └──────────────► MCP config frontend
+          ├──────────────► MCP config frontend
+          │
+          └──────────────► MCP SDK tool frontend
                               │
                               ▼
                       Agent IR + evidence graph
@@ -287,7 +348,7 @@ source tree / Git revisions
                        authority diff
 ```
 
-Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later MCP-tool, skill, and agent-configuration support can reuse the same graph instead of duplicating security logic.
+Frontends own ecosystem-specific parsing. Analysis consumes the common IR, so later skill and agent-configuration support can reuse the same graph instead of duplicating security logic.
 
 ## JavaScript example
 
@@ -320,12 +381,11 @@ ScopeGraph does not execute analyzed source code, imported project modules, MCP 
 
 Planned layers, in order:
 
-1. MCP SDK tool-registration discovery and tool-level capability linking
-2. Claude Code, Codex, and `SKILL.md` frontends
-3. filesystem, secret-source, and network-send semantics in JS/TS
-4. composed-authority analysis across multiple tools
-5. interactive local HTML capability graph
-6. package/release hardening and a reusable GitHub Action
+1. Claude Code, Codex, and `SKILL.md` frontends
+2. filesystem, secret-source, and network-send semantics in JS/TS
+3. composed-authority analysis across multiple tools
+4. interactive local HTML capability graph
+5. package/release hardening and a reusable GitHub Action
 
 The roadmap is intentionally incremental: a feature only ships when its positive, negative, and unresolved cases are reproducible.
 
