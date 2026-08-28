@@ -7,6 +7,7 @@ export function renderTerminal(report: ScanReport): string {
     `Analyzed: ${report.filesAnalyzed} JavaScript / TypeScript file${report.filesAnalyzed === 1 ? "" : "s"}`,
     `MCP servers: ${report.mcpServers}`,
     `MCP tools: ${report.mcpTools.length}`,
+    `Agent instructions: ${report.agentInstructions.length}`,
     `Capabilities: ${report.capabilities.length}`,
     `Findings: ${report.findings.length}`,
   ];
@@ -21,6 +22,27 @@ export function renderTerminal(report: ScanReport): string {
       } else {
         for (const capability of tool.capabilities) {
           lines.push(`  ${capability.kind} -> ${capability.target}`);
+        }
+      }
+    }
+  }
+
+  if (report.agentInstructions.length) {
+    lines.push("", "Agent instructions");
+    for (const instruction of report.agentInstructions) {
+      const precedence = instruction.kind === "codex"
+        ? `  precedence=${instruction.precedence ?? "normal"}`
+        : "";
+      lines.push(`${instruction.kind}  ${instruction.file}  scope=${instruction.scope}${precedence}`);
+
+      if (instruction.imports.length) {
+        lines.push(`  imports: ${instruction.imports.join(", ")}`);
+      }
+
+      if (instruction.skill) {
+        lines.push(`  name: ${instruction.skill.name}`);
+        if (instruction.skill.allowedTools?.length) {
+          lines.push(`  allowed tools: ${instruction.skill.allowedTools.join(", ")}`);
         }
       }
     }
