@@ -1,7 +1,12 @@
 import ts from "typescript";
 import { AgentGraph } from "../../ir/graph.ts";
 import { createNodeId } from "../../ir/ids.ts";
-import type { Capability, Diagnostic, Evidence } from "../../ir/types.ts";
+import type {
+  Capability,
+  CapabilityKind,
+  Diagnostic,
+  Evidence,
+} from "../../ir/types.ts";
 import type { DiscoveredMcpTool } from "../mcp-sdk/discoverTools.ts";
 import {
   executionCapability,
@@ -48,7 +53,6 @@ export function analyzeModuleSource(
   const fileSystemNamespaces = new Set<string>();
   const taintedNames = new Map<string, string>();
   const taintedProperties = new Map<string, string>();
-  const taintToolNames = new Map<string, string>();
   const dynamicCallNames = new Set<string>();
   const mcpHandlerByRange = new Map<string, DiscoveredMcpTool>();
 
@@ -64,6 +68,26 @@ export function analyzeModuleSource(
   };
 
   const handlerKey = (node: ts.Node): string => `${node.getStart(sourceFile)}:${node.getEnd()}`;
+
+  const addToolCapability = (
+    tool: DiscoveredMcpTool,
+    kind: CapabilityKind,
+    target: string,
+    node: ts.Node,
+    symbol: string,
+  ): void => {
+    const sourceName = `mcp-tool:${tool.name}`;
+    const key = `${kind}:${sourceName}:${target}`;
+    if (capabilityKeys.has(key)) return;
+    capabilityKeys.add(key);
+    capabilities.push({
+      id: createNodeId("capability", filePath, key),
+      kind,
+      source: sourceName,
+      target,
+      evidence: [evidence(node, symbol)],
+    });
+  };
 
   for (const tool of options.mcpTools ?? []) {
     mcpHandlerByRange.set(`${tool.handlerStart}:${tool.handlerEnd}`, tool);
@@ -224,6 +248,19 @@ export function analyzeModuleSource(
     return undefined;
   };
 
+  const networkTargetForFetch = (node: ts.CallExpression): string => {
+    const target = node.arguments[0];
+    if (!target || (!ts.isStringLiteral(target) && !ts.isNoSubstitutionTemplateLiteral(target))) {
+      return "<dynamic>";
+    }
+    try {
+      const parsed = new URL(target.text);
+      return parsed.origin === "null" ? parsed.protocol : parsed.origin;
+    } catch {
+      return "<dynamic>";
+    }
+  };
+
   const seedMcpToolInputs = (
     node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration,
     tool: DiscoveredMcpTool,
@@ -236,7 +273,6 @@ export function analyzeModuleSource(
       const id = createNodeId("mcp-tool-input", filePath, `${label}@${parameter.pos}`);
       graph.addNode({ id, kind: "mcp-tool-input", label, evidence: [evidence(parameter, label)] });
       sources.add(id);
-      taintToolNames.set(id, tool.name);
       if (localName) taintedNames.set(localName, id);
       if (rootName) taintedProperties.set(`${rootName}.${inputName}`, id);
     };
@@ -260,7 +296,9 @@ export function analyzeModuleSource(
     }
   };
 
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, activeMcpTool?: DiscoveredMcpTool): void => {
+    let currentTool = activeMcpTool;
+
     if (
       ts.isFunctionDeclaration(node)
       || ts.isFunctionExpression(node)
@@ -269,8 +307,10 @@ export function analyzeModuleSource(
     ) {
       const mcpTool = mcpHandlerByRange.get(handlerKey(node));
       if (mcpTool) {
+        currentTool = mcpTool;
         seedMcpToolInputs(node, mcpTool);
       } else {
+        currentTool = undefined;
         for (const parameter of node.parameters) {
           if (!ts.isIdentifier(parameter.name)) continue;
           const name = parameter.name.text;
@@ -279,6 +319,22 @@ export function analyzeModuleSource(
           sources.add(id);
           taintedNames.set(name, id);
         }
+      }
+    }
+
+    if (
+      currentTool
+      && (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+    ) {
+      const environmentKey = environmentKeyForExpression(node);
+      if (environmentKey) {
+        addToolCapability(
+          currentTool,
+          "environment.read",
+          environmentKey,
+          node,
+          `process.env.${environmentKey}`,
+        );
       }
     }
 
@@ -301,8 +357,6 @@ export function analyzeModuleSource(
         graph.addNode({ id, kind: "command", label: name, evidence: [evidence(node, name)] });
         graph.addEdge({ from: incoming, to: id, kind: "passes-to", evidence: [evidence(node, name)] });
         taintedNames.set(name, id);
-        const toolName = taintToolNames.get(incoming);
-        if (toolName) taintToolNames.set(id, toolName);
       }
     }
 
@@ -313,28 +367,17 @@ export function analyzeModuleSource(
         const sink = createNodeId("process", filePath, `${label}@${node.pos}`);
         graph.addNode({ id: sink, kind: "process", label, evidence: [evidence(node, label)] });
         sinks.add(sink);
+
+        const kind = executionCapability(apiName);
+        if (currentTool && kind) {
+          addToolCapability(currentTool, kind, `child_process.${apiName}`, node, label);
+        }
+
         const first = node.arguments[0];
         if (first) {
           const incoming = taintForExpression(first);
           if (incoming) {
             graph.addEdge({ from: incoming, to: sink, kind: "executes", evidence: [evidence(node, label)] });
-            const toolName = taintToolNames.get(incoming);
-            const kind = executionCapability(apiName);
-            if (toolName && kind) {
-              const target = `child_process.${apiName}`;
-              const sourceName = `mcp-tool:${toolName}`;
-              const key = `${kind}:${sourceName}:${target}`;
-              if (!capabilityKeys.has(key)) {
-                capabilityKeys.add(key);
-                capabilities.push({
-                  id: createNodeId("capability", filePath, key),
-                  kind,
-                  source: sourceName,
-                  target,
-                  evidence: [evidence(node, label)],
-                });
-              }
-            }
           }
         }
       } else {
@@ -344,6 +387,11 @@ export function analyzeModuleSource(
           const sink = createNodeId("file", filePath, `${label}@${node.pos}`);
           graph.addNode({ id: sink, kind: "file", label, evidence: [evidence(node, label)] });
           fileWriteSinks.add(sink);
+
+          if (currentTool) {
+            addToolCapability(currentTool, "filesystem.write", `fs.${fileApiName}`, node, label);
+          }
+
           for (const argument of node.arguments.slice(0, 2)) {
             const incoming = taintForExpression(argument);
             if (!incoming) continue;
@@ -354,6 +402,17 @@ export function analyzeModuleSource(
           const sink = createNodeId("network", filePath, `${label}@${node.pos}`);
           graph.addNode({ id: sink, kind: "network", label, evidence: [evidence(node, label)] });
           networkSinks.add(sink);
+
+          if (currentTool) {
+            addToolCapability(
+              currentTool,
+              "network.send",
+              networkTargetForFetch(node),
+              node,
+              label,
+            );
+          }
+
           for (const argument of node.arguments) {
             const incoming = taintForExpression(argument);
             if (!incoming) continue;
@@ -374,7 +433,7 @@ export function analyzeModuleSource(
       }
     }
 
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, currentTool));
   };
 
   visit(sourceFile);
