@@ -52,6 +52,20 @@ test("JS frontend proves untrusted data reaches filesystem mutation", () => {
   );
 });
 
+test("JS frontend does not treat internal helper parameters as agent-controlled", () => {
+  const analysis = analyzeModuleSource("internal.ts", `
+    import { writeFile } from "node:fs/promises";
+    async function save(input: { body: string }) {
+      await writeFile("output.txt", input.body);
+    }
+  `);
+
+  assert.equal(
+    findPaths(analysis.graph, analysis.sources, analysis.fileWriteSinks).length,
+    0,
+  );
+});
+
 test("JS frontend keeps static filesystem writes disconnected from untrusted input", () => {
   const analysis = analyzeModuleSource("write-safe.ts", `
     import { writeFile } from "node:fs/promises";
