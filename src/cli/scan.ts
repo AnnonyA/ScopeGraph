@@ -4,11 +4,17 @@ import { relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectFindings, type Finding } from "../analysis/findings.ts";
 import { discoverProject } from "../discovery/discoverProject.ts";
+import { analyzeInstructionFile } from "../frontends/instructions/analyzeInstructionFile.ts";
 import { analyzeModuleSource } from "../frontends/javascript/analyzeModule.ts";
 import { analyzeMcpConfig } from "../frontends/mcp/analyzeMcpConfig.ts";
 import { discoverMcpTools } from "../frontends/mcp-sdk/discoverTools.ts";
 import { AgentGraph } from "../ir/graph.ts";
-import type { Capability, Diagnostic, McpTool } from "../ir/types.ts";
+import type {
+  AgentInstruction,
+  Capability,
+  Diagnostic,
+  McpTool,
+} from "../ir/types.ts";
 import { renderJson } from "../reporters/json.ts";
 import { renderSarif } from "../reporters/sarif.ts";
 import { renderTerminal } from "../reporters/terminal.ts";
@@ -18,6 +24,7 @@ export interface ScanReport {
   filesAnalyzed: number;
   mcpServers: number;
   mcpTools: McpTool[];
+  agentInstructions: AgentInstruction[];
   capabilities: Capability[];
   findings: Finding[];
   diagnostics: Diagnostic[];
@@ -33,6 +40,10 @@ function toolOrder(a: McpTool, b: McpTool): number {
   return `${a.server}:${a.name}`.localeCompare(`${b.server}:${b.name}`);
 }
 
+function instructionOrder(a: AgentInstruction, b: AgentInstruction): number {
+  return `${a.file}:${a.kind}`.localeCompare(`${b.file}:${b.kind}`);
+}
+
 function evidencePath(root: string, file: string): string {
   return relative(root, file).split(sep).join("/");
 }
@@ -45,6 +56,7 @@ export async function scanProject(root: string): Promise<ScanReport> {
   const diagnostics: Diagnostic[] = [];
   const capabilities: Capability[] = [];
   const mcpTools: McpTool[] = [];
+  const agentInstructions: AgentInstruction[] = [];
   const mcpServerIds = new Set<string>();
 
   for (const file of project.sourceFiles) {
@@ -84,14 +96,23 @@ export async function scanProject(root: string): Promise<ScanReport> {
     diagnostics.push(...analysis.diagnostics);
   }
 
+  for (const file of project.agentFiles) {
+    const source = await readFile(file, "utf8");
+    const analysis = analyzeInstructionFile(evidencePath(project.root, file), source);
+    agentInstructions.push(...analysis.instructions);
+    diagnostics.push(...analysis.diagnostics);
+  }
+
   capabilities.sort(capabilityOrder);
   mcpTools.sort(toolOrder);
+  agentInstructions.sort(instructionOrder);
 
   return {
     root: project.root,
     filesAnalyzed: project.sourceFiles.length,
     mcpServers: mcpServerIds.size,
     mcpTools,
+    agentInstructions,
     capabilities,
     findings: detectFindings(graph, sources, sinks),
     diagnostics,
