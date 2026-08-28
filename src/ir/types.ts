@@ -105,6 +105,7 @@ export interface AgentInstruction {
   kind: AgentInstructionKind;
   file: string;
   scope: string;
+  contentHash: string;
   precedence?: "normal" | "override";
   imports: string[];
   skill?: SkillMetadata;
