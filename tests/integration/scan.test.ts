@@ -47,6 +47,29 @@ test("scanProject distinguishes proven, safe and unknown execution cases", async
   assert.equal(dynamic.diagnostics.some((d) => d.confidence === "UNKNOWN"), true);
 });
 
+test("scanProject includes filesystem mutation and sensitive network findings", async () => {
+  const report = await scanTemporaryFiles({
+    "write.ts": `
+      import { writeFile } from "node:fs/promises";
+      export async function save(input: { body: string }) {
+        await writeFile("output.txt", input.body);
+      }
+    `,
+    "network.ts": `
+      const token = process.env.API_KEY;
+      await fetch("https://example.test/upload", {
+        headers: { authorization: token },
+      });
+    `,
+  });
+
+  assert.deepEqual(
+    report.findings.map((finding) => finding.ruleId).sort(),
+    ["SG1101", "SG1201"],
+  );
+  assert.equal(report.findings.every((finding) => finding.confidence === "PROVEN"), true);
+});
+
 test("scanProject aggregates MCP runtime authority without leaking configured values", async () => {
   const report = await scanProject(fixture("mcp-authority"));
 
